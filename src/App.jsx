@@ -335,7 +335,7 @@ function Workspace({ onLogout }) {
     try {
       const stored = JSON.parse(localStorage.getItem('wixnote-draft-' + row?.id));
       if (stored && stored.version === row?.version)
-        recovered = { ...row, ...stored, attachments: row.attachments };
+        recovered = { ...row, ...stored, favorite: row.favorite, attachments: row.attachments };
     } catch {
       /* Ignore invalid local drafts. */
     }
@@ -379,7 +379,6 @@ function Workspace({ onLogout }) {
             type: snapshot.type,
             folder_id: snapshot.folder_id,
             tags: snapshot.tags.map((t) => t.id),
-            favorite: snapshot.favorite,
             pinned: snapshot.pinned,
             version,
           },
@@ -387,6 +386,8 @@ function Workspace({ onLogout }) {
         if (draftRef.current?.id === saved.id) {
           if (attachmentEpoch.current !== attachmentsAtStart)
             saved.attachments = draftRef.current.attachments;
+          // A favorite toggled while this save was in flight is newer than the response.
+          saved.favorite = draftRef.current.favorite;
           serverRef.current = saved;
           if (dirtyRef.current === generation && !nativeDirtyRef.current) {
             dirtyRef.current = 0;
@@ -409,7 +410,6 @@ function Workspace({ onLogout }) {
         setNotes((rows) => rows.map((n) => (n.id === saved.id ? summary(saved) : n)));
         refresh();
         if (
-          saved.favorite !== previous.favorite ||
           saved.folder_id !== previous.folder_id ||
           saved.tags
             .map((t) => t.id)
@@ -589,6 +589,22 @@ function Workspace({ onLogout }) {
       onError(e);
     }
   }
+  async function setFavorite(id, favorite) {
+    try {
+      await api(`/notes/${id}/favorite`, { method: 'PUT', body: { favorite } });
+      const apply = (n) => (n?.id === id ? { ...n, favorite } : n);
+      if (draftRef.current?.id === id) {
+        serverRef.current = apply(serverRef.current);
+        draftRef.current = apply(draftRef.current);
+        setDraft(draftRef.current);
+      }
+      setNotes((rows) => rows.map(apply));
+      setRefreshKey((n) => n + 1);
+      refresh();
+    } catch (e) {
+      onError(e);
+    }
+  }
   async function upload(file) {
     const note = draftRef.current;
     if (!note) throw new Error('请先打开一篇笔记');
@@ -719,7 +735,7 @@ function Workspace({ onLogout }) {
           {
             icon: Star,
             label: row.favorite ? '取消收藏' : '添加到收藏',
-            action: () => mutateNote(row.id, { favorite: !row.favorite }),
+            action: () => setFavorite(row.id, !row.favorite),
           },
           {
             icon: Pin,
@@ -1428,10 +1444,7 @@ function Workspace({ onLogout }) {
                 label={draft.favorite ? '取消收藏' : '收藏笔记'}
                 active={draft.favorite}
                 disabled={deleted}
-                onClick={() => {
-                  edit({ favorite: !draft.favorite });
-                  refresh();
-                }}
+                onClick={() => setFavorite(draft.id, !draft.favorite)}
               />
               <IconButton
                 icon={Share2}

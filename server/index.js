@@ -768,6 +768,14 @@ export function createApp({
     });
     res.json(noteDetail(note(row.id, owner(req))));
   });
+  // Favorite is a list marker, not content, so it skips the version and modified time.
+  app.put('/api/notes/:id/favorite', (req, res) => {
+    const row = note(req.params.id, owner(req));
+    if (row.deleted_at) throw error(400, '请先恢复此笔记');
+    const favorite = !!req.body.favorite;
+    run('UPDATE notes SET favorite=? WHERE id=?', +favorite, row.id);
+    res.json({ favorite });
+  });
   app.post('/api/notes/:id/share', (req, res) => {
     const row = note(req.params.id, owner(req));
     if (row.deleted_at) throw error(400, '回收站中的笔记不能分享');
