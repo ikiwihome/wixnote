@@ -1,0 +1,31 @@
+services:
+  wixnote:
+    build: .
+    image: wixnote:local
+    restart: unless-stopped
+    init: true
+    ports:
+      - '${PORT:-8080}:3000'
+    environment:
+      TZ: Asia/Shanghai
+      DATA_DIR: /data
+      MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-100}
+      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-false}
+      SECURE_COOKIE: ${SECURE_COOKIE:-false}
+    volumes:
+      - wixnote-data:/data
+    read_only: true
+    tmpfs:
+      - /tmp:size=128m,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    logging:
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: '3'
+
+volumes:
+  wixnote-data:

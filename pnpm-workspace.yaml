@@ -1,0 +1,5 @@
+allowBuilds:
+  '@nestjs/core': false
+  esbuild: false
+  sharp: false
+blockExoticSubdeps: false

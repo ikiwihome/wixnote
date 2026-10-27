@@ -1,0 +1,8 @@
+node_modules/
+dist/
+data/
+.lint-cache/
+test-results/
+playwright-report/
+package-lock.json
+pnpm-lock.yaml

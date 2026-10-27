@@ -1,0 +1,10 @@
+node_modules/
+dist/
+data/
+.env
+*.log
+__pycache__/
+*.pyc
+.lint-cache/
+test-results/
+playwright-report/

@@ -1,0 +1,49 @@
+:root {
+  --frame-background: #fff;
+  --frame-scrollbar: #b2bccd;
+  color-scheme: light;
+  scrollbar-width: thin;
+  scrollbar-color: var(--frame-scrollbar) transparent;
+}
+:root[data-theme='dark'] {
+  --frame-background: #333;
+  --frame-scrollbar: #777;
+  color-scheme: dark;
+}
+html,
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--frame-background);
+  font-family: 'Open Sans', 'Microsoft YaHei', sans-serif;
+}
+body {
+  display: flow-root;
+}
+#editor > .editor-main {
+  margin: 0;
+  min-height: 100vh;
+  --editor-font-size: 16px;
+  --editor-width: 1024px;
+}
+#editor > .editor-main > .root-container-extend {
+  margin: 0 auto;
+  max-width: 100%;
+  width: 100%;
+}
+#editor .editor-container.root-container {
+  min-height: 100vh;
+  padding: 24px 40px 80px;
+}
+#editor .editor-container.root-container:focus {
+  outline: none;
+}
+body.dark {
+  background: #333;
+  color: #f0f0f0;
+}
+@media (max-width: 600px) {
+  #editor .editor-container.root-container {
+    padding: 20px 23px 60px;
+  }
+}

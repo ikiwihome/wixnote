@@ -1,0 +1,63 @@
+name: Verify application and Docker image
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.22.1
+          cache: npm
+      - run: npm ci --ignore-scripts
+      - run: npm rebuild esbuild
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          load: true
+          push: false
+          tags: wixnote:ci
+
+      - name: Container health and persistence smoke test
+        shell: bash
+        run: |
+          docker compose config --quiet
+          docker volume create wixnote-ci
+          docker run -d --name wixnote-ci -p 18080:3000 -v wixnote-ci:/data --read-only --tmpfs /tmp --cap-drop ALL --security-opt no-new-privileges wixnote:ci
+          trap 'docker logs wixnote-ci; docker rm -f wixnote-ci; docker volume rm wixnote-ci' EXIT
+          for attempt in {1..30}; do
+            if curl -fsS http://localhost:18080/api/health; then break; fi
+            sleep 1
+          done
+          curl -fsS -c /tmp/wix-cookie -H 'X-Wix-Request: 1' -H 'Content-Type: application/json' -d '{"name":"CI","email":"ci@example.com","password":"ci-test-password-123"}' http://localhost:18080/api/auth/register
+          docker restart wixnote-ci
+          for attempt in {1..30}; do
+            if curl -fsS http://localhost:18080/api/health; then break; fi
+            sleep 1
+          done
+          curl -fsS -b /tmp/wix-cookie http://localhost:18080/api/notes | python3 -c 'import json,sys; assert len(json.load(sys.stdin)) == 1'
