@@ -1,18 +1,24 @@
-FROM node:24.22.1-bookworm-slim AS build
+FROM node:24.22.1-bookworm-slim AS dependencies
 WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm ci --ignore-scripts --no-audit --no-fund && npm rebuild esbuild
+RUN npm install --global pnpm@12.3.4 --no-audit --no-fund
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
+RUN pnpm install --frozen-lockfile --ignore-scripts
+
+FROM dependencies AS build
 COPY index.html vite.config.js ./
 COPY src ./src
 COPY public ./public
-RUN npm run build
+RUN pnpm run build
+
+FROM dependencies AS production-dependencies
+RUN pnpm prune --prod --ignore-scripts
 
 FROM node:24.22.1-bookworm-slim AS production
 ENV NODE_ENV=production PORT=3000 HOST=0.0.0.0 DATA_DIR=/data
 WORKDIR /app
-COPY package.json package-lock.json ./
-RUN npm ci --omit=dev --ignore-scripts --no-audit --no-fund && npm cache clean --force \
-    && mkdir -p /data && chown node:node /data
+COPY --chown=node:node package.json ./
+COPY --from=production-dependencies --chown=node:node /app/node_modules ./node_modules
+RUN mkdir -p /data && chown node:node /data
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --chown=node:node server ./server
 COPY --chown=node:node scripts/reset-password.js ./scripts/reset-password.js

@@ -87,12 +87,12 @@ docker run -d --name wixnote --restart unless-stopped \
 
 ## 本地开发
 
-需要 Node.js 24.22.1 或更高版本，无需 Docker：
+需要 Node.js 24.22.1 或更高版本、pnpm 12.3.4，无需 Docker：
 
 ```sh
-npm ci --ignore-scripts
-npm rebuild esbuild
-npm run dev
+npm install --global pnpm@12.3.4
+pnpm install --frozen-lockfile --ignore-scripts
+pnpm run dev
 ```
 
 - 前端开发页面：<http://localhost:5173>（Vite，`/api` 与 `/files` 代理到 3000）
@@ -104,37 +104,23 @@ npm run dev
 生产模式：
 
 ```sh
-npm run build
-npm start
+pnpm run build
+pnpm start
 # http://localhost:3000
 ```
 
 ## 测试与验证
 
 ```sh
-npm run lint                          # JavaScript / React、CSS 与格式检查
-npm run lint:js                       # ESLint（包含 React Hooks 检查）
-npm run lint:css                      # Stylelint
-npm run format                       # 统一格式
-npm test                             # 编辑器包接入、旧块数据与 ZIP 回归
-npm run build                          # 生产构建
+pnpm run lint                          # JavaScript / React、CSS 与格式检查
+pnpm run lint:js                       # ESLint（包含 React Hooks 检查）
+pnpm run lint:css                      # Stylelint
+pnpm run format                       # 统一格式
+pnpm test                             # 存在 tests/*.test.js 时执行
+pnpm run build                          # 生产构建
 curl http://localhost:3000/api/health  # 返回 {"ok":true,...}
 ```
 
-Lint 检查自有源码和配置；依赖、构建产物和运行数据不参与检查。CSS 规则检查声明、重复选择器和无效语法；组件、主题和响应式样式的有意优先级覆盖不做强制重排。
-
-浏览器回归测试基于 Playwright。`playwright.config.js` 在 `tests/browser/` 下查找用例，并通过 `scripts/e2e-server.js` 启动一个使用临时数据目录（`os.tmpdir()`）的独立实例，不会触碰你的笔记库：
-
-```sh
-npx playwright install chromium
-npm run test:e2e
-```
-
-编辑期间只更新内存草稿；切换笔记、导出或退出登录前如有未保存修改，会提示先手动保存。关闭或刷新页面时也会提示未保存修改。
-
-浏览器用例覆盖实际 WizEditor 运行时、手动保存与快捷键、撤销重做、旧原生文档和 HTML / Markdown 载入、表格与代码、图片粘贴及重新载入、ZIP 导出、深色主题、空白与长文滚动、详情面板和只读状态。旧格式夹具由替换前的 LiveEditor 转换接口生成。
-
-也可手工验证持久化：导出 JSON → 注册新账户 → 导入 JSON → 重启容器后数据仍在。
 
 ## 数据与备份
 

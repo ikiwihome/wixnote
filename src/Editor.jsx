@@ -6,6 +6,7 @@ export function SafeContent({ content, type, className = '' }) {
   return (
     <div
       className={'rendered-content ' + className}
+      // eslint-disable-next-line @eslint-react/dom-no-dangerously-set-innerhtml -- DOMPurify sanitizes this HTML.
       dangerouslySetInnerHTML={{
         __html: DOMPurify.sanitize(
           type === 'markdown' ? marked.parse(content || '') : content || '',
