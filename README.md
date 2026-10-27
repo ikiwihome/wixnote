@@ -1,34 +1,75 @@
-# wixnote 灵眸笔记
+<p align="center">
+  <img src="docs/favicon.svg" width="72" height="72" alt="WixNote logo" />
+</p>
 
-> 自托管、单容器的私人笔记服务：笔记数据留在自己的服务器上。
+<h1 align="center">灵眸笔记 WixNote</h1>
 
-![Node.js](https://img.shields.io/badge/node-%E2%89%A524.22.1-339933?logo=node.js&logoColor=white)
-![React](https://img.shields.io/badge/react-19-61dafb?logo=react&logoColor=white)
-![Docker](https://img.shields.io/badge/docker-compose-2496ed?logo=docker&logoColor=white)
-![License](https://img.shields.io/badge/license-MIT-green)
+<p align="center">安静地记录，清晰地思考 —— 自托管、单容器的私人笔记服务</p>
 
-wixnote 灵眸笔记 是一个独立的 React + Express + SQLite 笔记应用，整套服务打包为单个容器镜像，**不需要**外部数据库、Redis、搜索集群。
+<p align="center">
+  <a href="https://ikiwihome.github.io/wixnote/"><strong>项目主页</strong></a> ·
+  <a href="#快速开始">快速开始</a> ·
+  <a href="README.en.md">English</a>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/node-%E2%89%A524.22.1-339933?logo=node.js&logoColor=white" alt="Node.js" />
+  <img src="https://img.shields.io/badge/react-19-61dafb?logo=react&logoColor=white" alt="React" />
+  <img src="https://img.shields.io/badge/docker-compose-2496ed?logo=docker&logoColor=white" alt="Docker" />
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="License" />
+</p>
+
+![灵眸笔记工作区](docs/screenshots/workspace-light.png)
+
+灵眸笔记是一个简洁的私人笔记应用：富文本与大纲编辑、全文搜索、历史版本、多格式导出一应俱全，笔记数据始终留在你自己的服务器上。
+
+它基于 React + Express + SQLite 构建，整套服务打包为**单个容器镜像**，不需要外部数据库、Redis 或搜索集群，一条 `docker compose` 命令即可运行。
+
+## 界面截图
+
+<table>
+  <tr>
+    <td width="50%"><img src="docs/screenshots/workspace-dark.png" alt="深色模式" /></td>
+    <td width="50%"><img src="docs/screenshots/login.png" alt="登录界面" /></td>
+  </tr>
+  <tr>
+    <td align="center">深色模式</td>
+    <td align="center">登录界面</td>
+  </tr>
+</table>
+
+<p align="center">
+  <img src="docs/screenshots/mobile-list.png" width="240" alt="手机上的笔记列表" />
+  &nbsp;&nbsp;
+  <img src="docs/screenshots/mobile-note.png" width="240" alt="手机上打开的笔记" />
+</p>
+<p align="center">移动端</p>
 
 ## 功能特性
 
 **编辑与组织**
 
-- 三栏布局：文件夹树、标签、收藏、置顶、排序，以及摘要 / 紧凑两种列表视图。
-- 新建富文本与大纲笔记，支持待办清单、标题目录、表格、代码块、图片与附件。
-- 5 个内置模板：空白、会议纪要、每日日记、读书笔记、项目计划。
+- 富文本与大纲笔记：标题、列表、待办清单、表格、代码块、图片与附件，支持插入流程图 / UML。
+- 5 个内置模板：空白、会议纪要、每日日记、读书笔记、项目计划；可导入 Markdown 文件为新笔记。
+- 多级文件夹、标签与收藏；按修改时间、创建时间或标题排序，摘要 / 紧凑两种列表视图。
 
-**查找与协作**
+**查找与回溯**
 
-- 中文标题与正文全文搜索（标题 + 纯文本索引）。
-- 点击工具栏保存图标或按 `Ctrl/⌘ + S` 手动保存，并发编辑版本冲突提示、历史版本查看与恢复、回收站。
-- 只读链接分享与撤销、个人笔记评论。
+- 中文标题与正文全文搜索，`Ctrl/⌘ + K` 随时唤起。
+- 点击保存图标或按 `Ctrl/⌘ + S` 保存；未保存的草稿留在当前浏览器中，刷新后可恢复。
+- 历史版本查看与恢复、回收站、多窗口编辑冲突提示。
 
-**数据自主**
+**分享与导出**
 
-- 导出 Word、PDF、HTML、Markdown 和纯文本；导入 Markdown 文件为新笔记。
-- 未保存的笔记草稿保存在当前浏览器中，刷新后可恢复。
+- 只读链接分享与撤销，个人笔记评论。
+- 导出 Word、PDF、HTML、Markdown 和纯文本。
 - JSON 完整备份与追加式恢复。
-- 多账户独立数据、会话登录、修改密码、深浅色主题、字号、手机导航、专注模式与快捷键（`Ctrl/⌘ + S/K/N`）。
+
+**体验与安全**
+
+- 浅色 / 深色 / 跟随系统主题，可调字号，专注模式，手机端单栏导航。
+- 多账户数据隔离，首个账户创建后默认关闭注册，没有默认密码。
+- 容器以非 root 用户、只读根文件系统运行。
 
 ## 快速开始
 
@@ -37,7 +78,7 @@ wixnote 灵眸笔记 是一个独立的 React + Express + SQLite 笔记应用，
 要求 Docker Engine / Docker Desktop 与 Docker Compose v2。
 
 ```sh
-git clone <仓库地址> wixnote
+git clone https://github.com/ikiwihome/wixnote.git
 cd wixnote
 docker compose up -d --build
 ```
@@ -220,13 +261,12 @@ server {
 │   ├── dev.js               # 同时启动后端与 Vite
 │   ├── e2e-server.js        # 使用临时数据目录的测试服务器
 │   └── reset-password.js
+├── docs/                    # 项目主页（GitHub Pages）与截图
 ├── .github/workflows/       # 构建、E2E 与容器冒烟测试
 ├── compose.yaml
 ├── Dockerfile
 └── playwright.config.js
 ```
-
-                                             |
 
 ## 贡献
 

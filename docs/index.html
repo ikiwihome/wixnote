@@ -1,0 +1,1165 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>灵眸笔记 WixNote</title>
+    <meta
+      name="description"
+      content="灵眸笔记是一个自托管、单容器的私人笔记服务：富文本与大纲编辑、全文搜索、历史版本、多格式导出，数据留在你自己的服务器上。"
+    />
+    <link rel="icon" href="favicon.svg" />
+    <style>
+      :root {
+        color-scheme: light;
+        --primary: #4c6ef5;
+        --primary-hover: #4263eb;
+        --primary-soft: #edf2ff;
+        --text: #1f2328;
+        --text-soft: #3d434b;
+        --muted: #747a83;
+        --bg: #fff;
+        --bg-soft: #f7f7f5;
+        --card: #fff;
+        --line: #ececea;
+        --code-bg: #1f2328;
+        --code-text: #e8e8ea;
+        --shadow: 0 1px 3px rgb(15 23 42 / 6%), 0 24px 64px rgb(15 23 42 / 12%);
+        --radius: 14px;
+        font-family:
+          -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Hiragino Sans GB',
+          'Microsoft YaHei', sans-serif;
+        -webkit-font-smoothing: antialiased;
+      }
+      @media (prefers-color-scheme: dark) {
+        :root:not([data-theme='light']) {
+          color-scheme: dark;
+          --primary: #7c94ff;
+          --primary-hover: #91a5ff;
+          --primary-soft: rgb(124 148 255 / 14%);
+          --text: #e8e8ea;
+          --text-soft: #c9cacf;
+          --muted: #9a9ba3;
+          --bg: #141517;
+          --bg-soft: #1b1c1f;
+          --card: #1e1f22;
+          --line: #2c2d31;
+          --code-bg: #0e0f11;
+          --shadow: 0 1px 3px rgb(0 0 0 / 30%), 0 24px 64px rgb(0 0 0 / 50%);
+        }
+      }
+      * {
+        box-sizing: border-box;
+      }
+      html {
+        scroll-behavior: smooth;
+      }
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--text);
+        font-size: 16px;
+        line-height: 1.65;
+      }
+      a {
+        color: inherit;
+        text-decoration: none;
+      }
+      img {
+        display: block;
+        max-width: 100%;
+        height: auto;
+      }
+      .wrap {
+        width: min(1160px, 100% - 32px);
+        margin: 0 auto;
+      }
+
+      /* Header */
+      header {
+        position: sticky;
+        top: 0;
+        z-index: 10;
+        background: color-mix(in srgb, var(--bg) 82%, transparent);
+        backdrop-filter: saturate(1.6) blur(14px);
+        border-bottom: 1px solid var(--line);
+      }
+      .nav {
+        display: flex;
+        align-items: center;
+        gap: 28px;
+        height: 60px;
+      }
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        font-weight: 650;
+        font-size: 17px;
+      }
+      .brand img {
+        width: 28px;
+        height: 28px;
+      }
+      .brand small {
+        color: var(--muted);
+        font-weight: 500;
+        font-size: 14px;
+      }
+      .links {
+        display: flex;
+        gap: 22px;
+        margin-left: auto;
+        font-size: 15px;
+        color: var(--muted);
+      }
+      .links a:hover {
+        color: var(--text);
+      }
+      .github {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        height: 36px;
+        padding: 0 14px;
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        font-size: 14px;
+        font-weight: 550;
+        transition:
+          background 0.15s,
+          border-color 0.15s;
+      }
+      .github:hover {
+        background: var(--bg-soft);
+        border-color: var(--muted);
+      }
+      .github svg {
+        width: 18px;
+        height: 18px;
+      }
+
+      /* Hero */
+      .hero {
+        position: relative;
+        padding: 88px 0 0;
+        text-align: center;
+        overflow: hidden;
+      }
+      .hero::before {
+        content: '';
+        position: absolute;
+        inset: -40% -10% auto;
+        height: 760px;
+        background:
+          radial-gradient(closest-side, rgb(76 110 245 / 18%), transparent),
+          radial-gradient(closest-side at 70% 40%, rgb(138 163 214 / 22%), transparent);
+        z-index: -1;
+      }
+      .eyebrow {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 5px 14px;
+        border-radius: 999px;
+        background: var(--primary-soft);
+        color: var(--primary);
+        font-size: 14px;
+        font-weight: 550;
+      }
+      h1 {
+        margin: 22px auto 0;
+        max-width: 760px;
+        font-size: clamp(36px, 6vw, 60px);
+        line-height: 1.15;
+        letter-spacing: -0.02em;
+        font-weight: 750;
+      }
+      h1 em {
+        font-style: normal;
+        color: var(--primary);
+      }
+      .lead {
+        margin: 20px auto 0;
+        max-width: 620px;
+        color: var(--muted);
+        font-size: 18px;
+      }
+      .actions {
+        display: flex;
+        justify-content: center;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin-top: 34px;
+      }
+      .btn {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        height: 46px;
+        padding: 0 22px;
+        border-radius: 10px;
+        font-weight: 600;
+        font-size: 15px;
+        transition:
+          background 0.15s,
+          transform 0.15s;
+      }
+      .btn:hover {
+        transform: translateY(-1px);
+      }
+      .btn svg {
+        width: 18px;
+        height: 18px;
+      }
+      .btn.primary {
+        background: var(--primary);
+        color: #fff;
+        box-shadow: 0 6px 20px rgb(76 110 245 / 30%);
+      }
+      .btn.primary:hover {
+        background: var(--primary-hover);
+      }
+      .btn.ghost {
+        border: 1px solid var(--line);
+        background: var(--card);
+      }
+      .theme-switch {
+        display: inline-flex;
+        margin: 56px auto 18px;
+        padding: 3px;
+        border-radius: 999px;
+        background: var(--bg-soft);
+        border: 1px solid var(--line);
+      }
+      .theme-switch button {
+        border: 0;
+        background: none;
+        color: var(--muted);
+        font: inherit;
+        font-size: 14px;
+        padding: 6px 16px;
+        border-radius: 999px;
+        cursor: pointer;
+      }
+      .theme-switch button[aria-pressed='true'] {
+        background: var(--card);
+        color: var(--text);
+        box-shadow: 0 1px 3px rgb(15 23 42 / 10%);
+      }
+      .window {
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        overflow: hidden;
+        background: var(--card);
+        box-shadow: var(--shadow);
+      }
+      .window-bar {
+        display: flex;
+        gap: 7px;
+        padding: 12px 14px;
+        border-bottom: 1px solid var(--line);
+        background: var(--bg-soft);
+      }
+      .window-bar i {
+        width: 11px;
+        height: 11px;
+        border-radius: 50%;
+        background: var(--line);
+      }
+      .hero .window {
+        text-align: left;
+      }
+      .shot-frame {
+        position: relative;
+        aspect-ratio: 16 / 10;
+      }
+      .shot-frame img {
+        position: absolute;
+        inset: 0;
+        width: 100%;
+        height: 100%;
+        object-fit: cover;
+        object-position: top left;
+        transition: opacity 0.35s;
+      }
+      .shot-frame img[hidden] {
+        display: block;
+        opacity: 0;
+      }
+
+      /* Sections */
+      section {
+        padding: 112px 0;
+      }
+      .section-head {
+        max-width: 640px;
+        margin: 0 auto 56px;
+        text-align: center;
+      }
+      .section-head .kicker {
+        color: var(--primary);
+        font-weight: 600;
+        font-size: 14px;
+        letter-spacing: 0.04em;
+      }
+      h2 {
+        margin: 10px 0 0;
+        font-size: clamp(28px, 4vw, 38px);
+        line-height: 1.25;
+        letter-spacing: -0.01em;
+        font-weight: 700;
+      }
+      .section-head p {
+        margin: 14px 0 0;
+        color: var(--muted);
+        font-size: 17px;
+      }
+      .features {
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 16px;
+      }
+      .feature {
+        padding: 26px;
+        border: 1px solid var(--line);
+        border-radius: var(--radius);
+        background: var(--card);
+        transition:
+          border-color 0.2s,
+          transform 0.2s;
+      }
+      .feature:hover {
+        border-color: color-mix(in srgb, var(--primary) 40%, var(--line));
+        transform: translateY(-2px);
+      }
+      .icon {
+        display: grid;
+        place-items: center;
+        width: 40px;
+        height: 40px;
+        border-radius: 10px;
+        background: var(--primary-soft);
+        color: var(--primary);
+      }
+      .icon svg {
+        width: 20px;
+        height: 20px;
+      }
+      .feature h3 {
+        margin: 18px 0 6px;
+        font-size: 17px;
+        font-weight: 650;
+      }
+      .feature p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 15px;
+      }
+
+      .alt {
+        background: var(--bg-soft);
+        border-block: 1px solid var(--line);
+      }
+      .showcase {
+        display: grid;
+        grid-template-columns: 1fr 1.35fr;
+        align-items: center;
+        gap: 64px;
+      }
+      .showcase + .showcase {
+        margin-top: 112px;
+      }
+      .showcase.reverse {
+        grid-template-columns: 1.35fr 1fr;
+      }
+      .showcase.reverse .copy {
+        order: 2;
+      }
+      .copy h2 {
+        margin-top: 8px;
+      }
+      .copy > p {
+        color: var(--muted);
+        font-size: 17px;
+      }
+      .checks {
+        list-style: none;
+        margin: 24px 0 0;
+        padding: 0;
+        display: grid;
+        gap: 12px;
+      }
+      .checks li {
+        display: flex;
+        gap: 10px;
+        color: var(--text-soft);
+      }
+      .checks svg {
+        flex: none;
+        width: 20px;
+        height: 20px;
+        margin-top: 3px;
+        color: var(--primary);
+      }
+      .phones {
+        display: flex;
+        justify-content: center;
+        gap: 24px;
+      }
+      .phone {
+        width: min(260px, 46%);
+        padding: 8px;
+        border-radius: 34px;
+        background: var(--card);
+        border: 1px solid var(--line);
+        box-shadow: var(--shadow);
+      }
+      .phone img {
+        border-radius: 26px;
+        aspect-ratio: 390 / 844;
+        object-fit: cover;
+        object-position: top;
+      }
+      .phone:nth-child(2) {
+        margin-top: 56px;
+      }
+      .rounded {
+        border-radius: var(--radius);
+        border: 1px solid var(--line);
+        box-shadow: var(--shadow);
+      }
+
+      /* Deploy */
+      .deploy {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 48px;
+        align-items: start;
+      }
+      .deploy > * {
+        min-width: 0;
+      }
+      .steps {
+        list-style: none;
+        margin: 0;
+        padding: 0;
+        counter-reset: step;
+        display: grid;
+        gap: 22px;
+      }
+      .steps li {
+        counter-increment: step;
+        display: grid;
+        grid-template-columns: 36px 1fr;
+        gap: 14px;
+      }
+      .steps li::before {
+        content: counter(step);
+        display: grid;
+        place-items: center;
+        width: 32px;
+        height: 32px;
+        border-radius: 50%;
+        background: var(--primary-soft);
+        color: var(--primary);
+        font-weight: 650;
+        font-size: 15px;
+      }
+      .steps h3 {
+        margin: 3px 0 4px;
+        font-size: 17px;
+      }
+      .steps p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 15px;
+      }
+      .code {
+        position: relative;
+        border-radius: var(--radius);
+        background: var(--code-bg);
+        color: var(--code-text);
+        overflow: hidden;
+        box-shadow: var(--shadow);
+      }
+      .code-bar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        padding: 10px 16px;
+        border-bottom: 1px solid rgb(255 255 255 / 8%);
+        color: #9a9ba3;
+        font-size: 13px;
+      }
+      .copy-btn {
+        border: 1px solid rgb(255 255 255 / 14%);
+        background: none;
+        color: #c9cacf;
+        font: inherit;
+        font-size: 12px;
+        padding: 3px 10px;
+        border-radius: 6px;
+        cursor: pointer;
+      }
+      .copy-btn:hover {
+        background: rgb(255 255 255 / 8%);
+      }
+      pre {
+        margin: 0;
+        padding: 18px 20px 22px;
+        overflow-x: auto;
+        font:
+          14px/1.8 ui-monospace,
+          'Cascadia Code',
+          Consolas,
+          monospace;
+      }
+      pre .c {
+        color: #7d8590;
+      }
+      pre .p {
+        color: #7c94ff;
+        user-select: none;
+      }
+      .stack {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 28px;
+      }
+      .stack span {
+        padding: 4px 12px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        background: var(--card);
+        font-size: 13px;
+        color: var(--muted);
+      }
+
+      .cta {
+        text-align: center;
+      }
+      .cta h2 {
+        margin: 0;
+      }
+      .cta p {
+        color: var(--muted);
+        font-size: 17px;
+        margin: 12px 0 0;
+      }
+
+      kbd,
+      code {
+        padding: 1px 6px;
+        border: 1px solid var(--line);
+        border-radius: 5px;
+        background: var(--bg-soft);
+        font:
+          0.85em ui-monospace,
+          'Cascadia Code',
+          Consolas,
+          monospace;
+      }
+      pre code {
+        padding: 0;
+        border: 0;
+        background: none;
+        font: inherit;
+      }
+
+      footer {
+        border-top: 1px solid var(--line);
+        padding: 28px 0;
+        color: var(--muted);
+        font-size: 14px;
+      }
+      footer .wrap {
+        display: flex;
+        justify-content: space-between;
+        gap: 16px;
+        flex-wrap: wrap;
+      }
+      footer a:hover {
+        color: var(--text);
+      }
+
+      @media (max-width: 900px) {
+        .features {
+          grid-template-columns: repeat(2, 1fr);
+        }
+        .showcase,
+        .showcase.reverse,
+        .deploy {
+          grid-template-columns: 1fr;
+          gap: 36px;
+        }
+        .showcase.reverse .copy {
+          order: 0;
+        }
+        section {
+          padding: 80px 0;
+        }
+      }
+      @media (max-width: 640px) {
+        .links {
+          display: none;
+        }
+        .nav {
+          justify-content: space-between;
+        }
+        .github span {
+          display: none;
+        }
+        .hero {
+          padding-top: 56px;
+        }
+        .lead {
+          font-size: 16px;
+        }
+        .features {
+          grid-template-columns: 1fr;
+        }
+        .phones {
+          gap: 14px;
+        }
+        .phone {
+          padding: 5px;
+          border-radius: 24px;
+        }
+        .phone img {
+          border-radius: 19px;
+        }
+        .phone:nth-child(2) {
+          margin-top: 32px;
+        }
+      }
+      @media (prefers-reduced-motion: reduce) {
+        * {
+          transition: none !important;
+          scroll-behavior: auto !important;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <nav class="wrap nav">
+        <a class="brand" href="#">
+          <img src="favicon.svg" alt="" />
+          灵眸笔记 <small>WixNote</small>
+        </a>
+        <div class="links">
+          <a href="#features">功能</a>
+          <a href="#showcase">界面</a>
+          <a href="#deploy">部署</a>
+        </div>
+        <a
+          class="github"
+          href="https://github.com/ikiwihome/wixnote"
+          target="_blank"
+          rel="noopener"
+          aria-label="在 GitHub 上查看源码"
+        >
+          <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+            <path
+              d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"
+            />
+          </svg>
+          <span>GitHub</span>
+        </a>
+      </nav>
+    </header>
+
+    <main>
+      <div class="hero">
+        <div class="wrap">
+          <span class="eyebrow">开源 · 自托管 · 单容器部署</span>
+          <h1>安静地记录，<em>清晰地思考</em></h1>
+          <p class="lead">
+            灵眸笔记是一个简洁的私人笔记服务。富文本与大纲编辑、全文搜索、历史版本、多格式导出，一应俱全；笔记数据始终留在你自己的服务器上。
+          </p>
+          <div class="actions">
+            <a class="btn primary" href="#deploy">
+              <svg
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                aria-hidden="true"
+              >
+                <path
+                  d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09z"
+                />
+                <path
+                  d="m12 15-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"
+                />
+                <path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0" />
+                <path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5" />
+              </svg>
+              快速部署
+            </a>
+            <a
+              class="btn ghost"
+              href="https://github.com/ikiwihome/wixnote"
+              target="_blank"
+              rel="noopener"
+            >
+              <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                <path
+                  d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"
+                />
+              </svg>
+              查看源码
+            </a>
+          </div>
+
+          <div class="theme-switch" role="group" aria-label="截图主题">
+            <button type="button" data-shot="light" aria-pressed="true">浅色</button>
+            <button type="button" data-shot="dark" aria-pressed="false">深色</button>
+          </div>
+          <div class="window">
+            <div class="window-bar"><i></i><i></i><i></i></div>
+            <div class="shot-frame">
+              <img
+                data-shot="light"
+                src="screenshots/workspace-light.png"
+                width="2880"
+                height="1800"
+                alt="灵眸笔记三栏工作区：左侧文件夹与标签，中间笔记列表，右侧正在编辑的产品周会纪要"
+              />
+              <img
+                data-shot="dark"
+                src="screenshots/workspace-dark.png"
+                width="2880"
+                height="1800"
+                alt="灵眸笔记深色主题下的工作区"
+                hidden
+              />
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <section id="features">
+        <div class="wrap">
+          <div class="section-head">
+            <div class="kicker">功能</div>
+            <h2>记录需要的一切，仅此而已</h2>
+            <p>没有多余的打扰，专注于写作、整理与查找。</p>
+          </div>
+          <div class="features">
+            <article class="feature">
+              <div class="icon">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M12 20h9" />
+                  <path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z" />
+                </svg>
+              </div>
+              <h3>富文本与大纲编辑</h3>
+              <p>
+                标题、列表、待办、表格、代码块、图片与附件，还有流程图和 UML，以及 5 个常用模板。
+              </p>
+            </article>
+            <article class="feature">
+              <div class="icon">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path
+                    d="M20 20a2 2 0 0 0 2-2V8a2 2 0 0 0-2-2h-7.9a2 2 0 0 1-1.69-.9L9.6 3.9A2 2 0 0 0 7.93 3H4a2 2 0 0 0-2 2v13a2 2 0 0 0 2 2Z"
+                  />
+                </svg>
+              </div>
+              <h3>文件夹、标签与收藏</h3>
+              <p>
+                多级文件夹树配合标签和收藏，按修改时间、创建时间或标题排序，摘要与紧凑两种列表视图。
+              </p>
+            </article>
+            <article class="feature">
+              <div class="icon">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <circle cx="11" cy="11" r="8" />
+                  <path d="m21 21-4.3-4.3" />
+                </svg>
+              </div>
+              <h3>中文全文搜索</h3>
+              <p>同时检索标题与正文，<kbd>Ctrl K</kbd> 随时唤起，快速定位想要的内容。</p>
+            </article>
+            <article class="feature">
+              <div class="icon">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8" />
+                  <path d="M3 3v5h5" />
+                  <path d="M12 7v5l4 2" />
+                </svg>
+              </div>
+              <h3>历史版本与回收站</h3>
+              <p>
+                每次保存自动留存版本，可随时查看与恢复；未保存的草稿留在浏览器中，刷新也不会丢。
+              </p>
+            </article>
+            <article class="feature">
+              <div class="icon">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <circle cx="18" cy="5" r="3" />
+                  <circle cx="6" cy="12" r="3" />
+                  <circle cx="18" cy="19" r="3" />
+                  <path d="m8.59 13.51 6.83 3.98M15.41 6.51l-6.82 3.98" />
+                </svg>
+              </div>
+              <h3>分享与评论</h3>
+              <p>一键生成只读分享链接，随时撤销；为笔记添加评论，记录后续想法。</p>
+            </article>
+            <article class="feature">
+              <div class="icon">
+                <svg
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <path d="m7 10 5 5 5-5" />
+                  <path d="M12 15V3" />
+                </svg>
+              </div>
+              <h3>多格式导入导出</h3>
+              <p>
+                导出 Word、PDF、HTML、Markdown 与纯文本，导入 Markdown 文件；完整 JSON 备份与恢复。
+              </p>
+            </article>
+          </div>
+        </div>
+      </section>
+
+      <section id="showcase" class="alt">
+        <div class="wrap">
+          <div class="showcase">
+            <div class="copy">
+              <div class="section-head" style="margin: 0; text-align: left">
+                <div class="kicker">深色模式</div>
+              </div>
+              <h2>白天与夜晚，都舒适</h2>
+              <p>浅色、深色或跟随系统。字号可调，标题层级随正文等比缩放，长时间阅读也不累眼。</p>
+              <ul class="checks">
+                <li>
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.4"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M20 6 9 17l-5-5" />
+                  </svg>
+                  编辑器与界面统一的深浅配色
+                </li>
+                <li>
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.4"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M20 6 9 17l-5-5" />
+                  </svg>
+                  专注模式隐藏侧栏，只留下正文
+                </li>
+                <li>
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.4"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M20 6 9 17l-5-5" />
+                  </svg>
+                  <span><kbd>Ctrl/⌘ + S</kbd> 保存、<kbd>N</kbd> 新建、<kbd>K</kbd> 搜索</span>
+                </li>
+              </ul>
+            </div>
+            <img
+              class="rounded"
+              src="screenshots/workspace-dark.png"
+              width="2880"
+              height="1800"
+              loading="lazy"
+              alt="深色主题下的笔记编辑界面"
+            />
+          </div>
+
+          <div class="showcase reverse">
+            <div class="copy">
+              <div class="section-head" style="margin: 0; text-align: left">
+                <div class="kicker">移动端</div>
+              </div>
+              <h2>手机上同样顺手</h2>
+              <p>窄屏下自动切换为单栏导航：列表、笔记、文件夹逐层进入，随时随地查看与记录。</p>
+              <ul class="checks">
+                <li>
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.4"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M20 6 9 17l-5-5" />
+                  </svg>
+                  响应式布局，无需安装 App
+                </li>
+                <li>
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.4"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M20 6 9 17l-5-5" />
+                  </svg>
+                  数据存放在服务器，任何设备登录即可访问
+                </li>
+              </ul>
+            </div>
+            <div class="phones">
+              <div class="phone">
+                <img
+                  src="screenshots/mobile-list.png"
+                  width="780"
+                  height="1688"
+                  loading="lazy"
+                  alt="手机上的笔记列表"
+                />
+              </div>
+              <div class="phone">
+                <img
+                  src="screenshots/mobile-note.png"
+                  width="780"
+                  height="1688"
+                  loading="lazy"
+                  alt="手机上打开的一篇笔记"
+                />
+              </div>
+            </div>
+          </div>
+
+          <div class="showcase">
+            <div class="copy">
+              <div class="section-head" style="margin: 0; text-align: left">
+                <div class="kicker">私有与安全</div>
+              </div>
+              <h2>你的笔记，只属于你</h2>
+              <p>
+                多账户数据完全隔离。首个账户创建后注册默认关闭，没有默认密码，也不依赖任何第三方服务。
+              </p>
+              <ul class="checks">
+                <li>
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.4"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M20 6 9 17l-5-5" />
+                  </svg>
+                  非 root 用户、只读根文件系统运行
+                </li>
+                <li>
+                  <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.4"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    aria-hidden="true"
+                  >
+                    <path d="M20 6 9 17l-5-5" />
+                  </svg>
+                  笔记、附件与历史版本都在一个数据卷里
+                </li>
+              </ul>
+            </div>
+            <img
+              class="rounded"
+              src="screenshots/login.png"
+              width="2880"
+              height="1800"
+              loading="lazy"
+              alt="灵眸笔记的登录界面"
+            />
+          </div>
+        </div>
+      </section>
+
+      <section id="deploy">
+        <div class="wrap">
+          <div class="section-head">
+            <div class="kicker">部署</div>
+            <h2>三条命令，拥有自己的笔记服务</h2>
+            <p>整套服务打包为单个容器镜像，不需要外部数据库、Redis 或搜索集群。</p>
+          </div>
+          <div class="deploy">
+            <ol class="steps">
+              <li>
+                <div>
+                  <h3>准备 Docker</h3>
+                  <p>安装 Docker Engine 或 Docker Desktop，以及 Docker Compose v2。</p>
+                </div>
+              </li>
+              <li>
+                <div>
+                  <h3>克隆并启动</h3>
+                  <p>拉取仓库，用 Docker Compose 构建并在后台运行。</p>
+                </div>
+              </li>
+              <li>
+                <div>
+                  <h3>创建账户</h3>
+                  <p>打开 <code>http://localhost:8080</code>，注册首个账户即可开始使用。</p>
+                </div>
+              </li>
+            </ol>
+            <div>
+              <div class="code">
+                <div class="code-bar">
+                  <span>Terminal</span>
+                  <button class="copy-btn" type="button">复制</button>
+                </div>
+                <pre><code><span class="p">$ </span>git clone https://github.com/ikiwihome/wixnote.git
+<span class="p">$ </span>cd wixnote
+<span class="p">$ </span>docker compose up -d --build
+<span class="c"># 打开 http://localhost:8080</span></code></pre>
+              </div>
+              <div class="stack">
+                <span>React 19</span>
+                <span>Express 5</span>
+                <span>SQLite</span>
+                <span>Docker</span>
+                <span>MIT License</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="alt cta">
+        <div class="wrap">
+          <h2>开始你的第一篇笔记</h2>
+          <p>完全开源，欢迎 Star、提出 Issue 或参与贡献。</p>
+          <div class="actions">
+            <a
+              class="btn primary"
+              href="https://github.com/ikiwihome/wixnote"
+              target="_blank"
+              rel="noopener"
+            >
+              <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+                <path
+                  d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"
+                />
+              </svg>
+              前往 GitHub
+            </a>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <div class="wrap">
+        <span>灵眸笔记 WixNote · MIT License</span>
+        <a href="https://github.com/ikiwihome/wixnote" target="_blank" rel="noopener"
+          >github.com/ikiwihome/wixnote</a
+        >
+      </div>
+    </footer>
+
+    <script>
+      const buttons = document.querySelectorAll('.theme-switch button');
+      const shots = document.querySelectorAll('.shot-frame img');
+      for (const button of buttons)
+        button.addEventListener('click', () => {
+          for (const b of buttons) b.setAttribute('aria-pressed', b === button);
+          for (const img of shots) img.hidden = img.dataset.shot !== button.dataset.shot;
+        });
+      if (matchMedia('(prefers-color-scheme: dark)').matches) buttons[1].click();
+
+      const copy = document.querySelector('.copy-btn');
+      copy.addEventListener('click', async () => {
+        const text = [...document.querySelectorAll('pre code')][0].innerText
+          .split('\n')
+          .filter((line) => line.startsWith('$ '))
+          .map((line) => line.slice(2))
+          .join('\n');
+        try {
+          await navigator.clipboard.writeText(text);
+          copy.textContent = '已复制';
+        } catch {
+          copy.textContent = '复制失败';
+        }
+        setTimeout(() => (copy.textContent = '复制'), 1600);
+      });
+    </script>
+  </body>
+</html>
