@@ -3,4 +3,5 @@ allowBuilds:
   core-js: false
   esbuild: false
   sharp: false
+  nice-napi: false
 blockExoticSubdeps: false
