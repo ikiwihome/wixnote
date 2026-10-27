@@ -14,7 +14,7 @@ import {
   MoreHorizontal,
   PanelLeft,
   PanelLeftClose,
-  Tag,
+  Hash,
   Pin,
   Paperclip,
   Share2,
@@ -72,7 +72,9 @@ function Auth({ auth, onLogin }) {
   return (
     <div className="auth-screen">
       <section className={'auth-card ' + (register ? 'register-card' : '')}>
+        <img className="auth-logo" src="/favicon.svg" alt="" />
         <h1>灵眸笔记</h1>
+        <p className="auth-subtitle">安静地记录，清晰地思考</p>
         <nav className="auth-tabs">
           <button
             className={!register ? 'selected' : ''}
@@ -855,7 +857,7 @@ function Workspace({ onLogout }) {
           <React.Fragment key={f.id}>
             <div
               className={'folder-row nav-row ' + (active ? 'selected' : '')}
-              style={{ paddingLeft: 20 + depth * 15 }}
+              style={{ paddingLeft: 6 + depth * 14 }}
               draggable
               onDragStart={(e) => {
                 e.dataTransfer.setData('folder', f.id);
@@ -893,7 +895,7 @@ function Workspace({ onLogout }) {
                 className="folder-select"
                 onClick={() => changeScope({ view: 'all', folder: f.id })}
               >
-                {active ? <FolderOpen size={17} /> : <Folder size={17} />}
+                {active ? <FolderOpen size={16} /> : <Folder size={16} />}
                 <span>{f.name}</span>
               </button>
               <button
@@ -978,11 +980,26 @@ function Workspace({ onLogout }) {
 
         <div className="sidebar-scroll">
           <nav className="main-nav">
+            <div
+              className={
+                'nav-row all-notes ' +
+                (scope.view === 'all' && !scope.folder && !scope.tag ? 'selected' : '')
+              }
+            >
+              <button
+                aria-label="个人笔记"
+                className="all-notes-select"
+                onClick={() => changeScope({ view: 'all' })}
+              >
+                <FileText size={16} />
+                <span>所有笔记</span>
+              </button>
+            </div>
             <button
               className={'nav-row ' + (scope.view === 'favorites' ? 'selected' : '')}
               onClick={() => changeScope({ view: 'favorites' })}
             >
-              <Star size={18} />
+              <Star size={16} />
               <span>我的收藏</span>
               <small>{boot.counts.favorites || ''}</small>
             </button>
@@ -992,46 +1009,30 @@ function Workspace({ onLogout }) {
               aria-label="折叠或展开个人笔记目录"
               onClick={() => setFoldersOpen(!foldersOpen)}
             >
-              {foldersOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-              <span>个人笔记</span>
+              <span>文件夹</span>
+              {foldersOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
             </button>
-            <button aria-label="新建文件夹" onClick={() => newFolder()}>
-              <Plus size={15} />
-            </button>
-          </div>
-          <div
-            className={
-              'nav-row all-notes ' +
-              (scope.view === 'all' && !scope.folder && !scope.tag ? 'selected' : '')
-            }
-          >
-            <button
-              aria-label="个人笔记"
-              className="all-notes-select"
-              onClick={() => changeScope({ view: 'all' })}
-            >
-              <FolderOpen size={18} />
-              <span>所有笔记</span>
-            </button>
-            <button className="nav-add" aria-label="添加文件夹" onClick={() => newFolder()}>
-              <Plus size={16} />
-            </button>
-            <button
-              className="tree-toggle"
-              aria-label={foldersOpen ? '折叠文件夹列表' : '展开文件夹列表'}
-              onClick={() => setFoldersOpen(!foldersOpen)}
-            >
-              {foldersOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+            <button aria-label="新建文件夹" title="新建文件夹" onClick={() => newFolder()}>
+              <Plus size={14} />
             </button>
           </div>
-          {foldersOpen && <nav className="folder-tree">{renderFolders()}</nav>}
+          {foldersOpen && (
+            <nav className="folder-tree">
+              {boot.folders.length ? (
+                renderFolders()
+              ) : (
+                <span className="nav-empty">新建文件夹来整理笔记</span>
+              )}
+            </nav>
+          )}
           <div className="nav-section tag-section">
-            <button onClick={() => setTagsOpen(!tagsOpen)}>
-              <Tag size={17} />
+            <button aria-label="折叠或展开标签" onClick={() => setTagsOpen(!tagsOpen)}>
               <span>标签</span>
+              {tagsOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
             </button>
             <button
               aria-label="新建标签"
+              title="新建标签"
               onClick={() =>
                 setDialog({
                   type: 'prompt',
@@ -1044,7 +1045,7 @@ function Workspace({ onLogout }) {
                 })
               }
             >
-              <Plus size={15} />
+              <Plus size={14} />
             </button>
           </div>
           {tagsOpen && (
@@ -1057,7 +1058,7 @@ function Workspace({ onLogout }) {
                     onContextMenu={(e) => showMenu(e, tagMenu(t))}
                   >
                     <button onClick={() => changeScope({ view: 'all', tag: t.id })}>
-                      <Tag size={16} />
+                      <Hash size={14} />
                       <span>{t.name}</span>
                     </button>
                     <button
@@ -1074,11 +1075,13 @@ function Workspace({ onLogout }) {
               )}
             </nav>
           )}
+        </div>
+        <div className="sidebar-footer">
           <button
             className={'nav-row ' + (scope.view === 'trash' ? 'selected' : '')}
             onClick={() => changeScope({ view: 'trash' })}
           >
-            <Trash2 size={17} />
+            <Trash2 size={16} />
             <span>回收站</span>
             {boot.trash > 0 && <small>{boot.trash}</small>}
           </button>
@@ -1118,10 +1121,14 @@ function Workspace({ onLogout }) {
             )}
           </label>
           <div className="new-note-row">
-            <button className="new-note" aria-label="新建笔记" onClick={() => createNote()}>
-              <Plus size={19} />
-              <span>新建笔记</span>
-              <kbd>{/Mac/.test(navigator.platform) ? '⌘ N' : 'Ctrl N'}</kbd>
+            <button
+              className="new-note"
+              aria-label="新建笔记"
+              title={'新建笔记 (' + (/Mac/.test(navigator.platform) ? '⌘ N' : 'Ctrl N') + ')'}
+              onClick={() => createNote()}
+            >
+              <Plus size={16} />
+              <span>新建</span>
             </button>
             <button
               className="new-note-select"
@@ -1148,7 +1155,7 @@ function Workspace({ onLogout }) {
                 ])
               }
             >
-              <ChevronDown size={15} />
+              <ChevronDown size={14} />
             </button>
           </div>
         </div>
