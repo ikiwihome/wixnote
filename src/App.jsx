@@ -47,6 +47,7 @@ import { exportDocument } from './export.js';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import NoteEditor, { SafeContent } from './Editor.jsx';
+import AuthBackground from './AuthBackground.jsx';
 import { api, download, date, bytes } from './api.js';
 import {
   IconButton,
@@ -54,6 +55,7 @@ import {
   Modal,
   PromptDialog,
   Dropdown,
+  Collapse,
   Settings,
   History,
   ShareDialog,
@@ -69,36 +71,45 @@ function Auth({ auth, onLogin }) {
     [password, setPassword] = useState(''),
     [err, setErr] = useState(''),
     [busy, setBusy] = useState(false);
+  // Tabs only make sense when there is something to switch to.
+  const canRegister = auth.needsSetup || auth.allowRegistration;
   return (
     <div className="auth-screen">
+      <AuthBackground />
       <section className={'auth-card ' + (register ? 'register-card' : '')}>
         <img className="auth-logo" src="/favicon.svg" alt="" />
         <h1>灵眸笔记</h1>
         <p className="auth-subtitle">安静地记录，清晰地思考</p>
-        <nav className="auth-tabs">
-          <button
-            className={!register ? 'selected' : ''}
-            onClick={() => {
-              setRegister(false);
-              setErr('');
-            }}
-          >
-            登录
-          </button>
-          {(auth.needsSetup || auth.allowRegistration) && (
-            <button
-              className={register ? 'selected' : ''}
-              onClick={() => {
-                setRegister(true);
-                setErr('');
-              }}
-            >
-              注册
-            </button>
-          )}
-        </nav>
-        {auth.needsSetup && register && (
-          <p className="setup-hint">创建首个账户，开始使用你的私人笔记空间</p>
+        {canRegister && (
+          <>
+            <nav className="auth-tabs">
+              <button
+                className={!register ? 'selected' : ''}
+                onClick={() => {
+                  setRegister(false);
+                  setErr('');
+                }}
+              >
+                登录
+              </button>
+              <button
+                className={register ? 'selected' : ''}
+                onClick={() => {
+                  setRegister(true);
+                  setErr('');
+                }}
+              >
+                注册
+              </button>
+            </nav>
+            <p className="setup-hint">
+              {!register
+                ? '欢迎回来，登录后继续你的记录'
+                : auth.needsSetup
+                  ? '创建首个账户，开始使用你的私人笔记空间'
+                  : '创建账户，开始使用你的私人笔记空间'}
+            </p>
+          </>
         )}
         <form
           onSubmit={async (e) => {
@@ -263,6 +274,7 @@ function Workspace({ onLogout }) {
     [resetKey, setResetKey] = useState(0),
     [refreshKey, setRefreshKey] = useState(0),
     [sidePanel, setSidePanel] = useState(null),
+    [lastPanel, setLastPanel] = useState(null),
     [focus, setFocus] = useState(false),
     [mobilePane, setMobilePane] = useState('list'),
     [navigation, setNavigation] = useState(true),
@@ -277,7 +289,6 @@ function Workspace({ onLogout }) {
     listSequence = useRef(0),
     openSequence = useRef(0),
     searchInput = useRef(),
-    fileInput = useRef(),
     importInput = useRef(),
     editorRef = useRef(),
     toastTimer = useRef();
@@ -598,6 +609,7 @@ function Workspace({ onLogout }) {
     event.stopPropagation();
     const rect = event.currentTarget.getBoundingClientRect();
     setMenu({
+      id: Date.now(),
       items,
       position: {
         x: event.type === 'contextmenu' ? event.clientX : rect.left,
@@ -608,6 +620,16 @@ function Workspace({ onLogout }) {
   async function savedDialog(type) {
     if (!(await ensureSaved())) return;
     setDialog({ type });
+  }
+  // Settings never touch the open note, so unsaved edits only need to reach the local draft
+  // (written by edit()) rather than the server.
+  async function openSettings() {
+    try {
+      await editorRef.current?.flush();
+    } catch {
+      /* The last automatic snapshot is already in the local draft. */
+    }
+    setDialog({ type: 'settings' });
   }
   async function logout() {
     if (!(await ensureSaved())) return;
@@ -889,7 +911,9 @@ function Workspace({ onLogout }) {
                 aria-label={(isOpen ? '折叠' : '展开') + f.name}
                 onClick={() => setExpanded((s) => ({ ...s, [f.id]: !isOpen }))}
               >
-                {children ? isOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} /> : null}
+                {children ? (
+                  <ChevronRight size={13} className={'chevron' + (isOpen ? ' open' : '')} />
+                ) : null}
               </button>
               <button
                 className="folder-select"
@@ -906,7 +930,7 @@ function Workspace({ onLogout }) {
                 <MoreHorizontal size={15} />
               </button>
             </div>
-            {children && isOpen && renderFolders(f.id, depth + 1)}
+            {children && <Collapse open={isOpen}>{renderFolders(f.id, depth + 1)}</Collapse>}
           </React.Fragment>
         );
       });
@@ -919,13 +943,18 @@ function Workspace({ onLogout }) {
         ...s,
         [key]: Math.min(max, Math.max(min, width + e.clientX - start)),
       }));
+    // Size transitions would make dragging lag behind the pointer.
+    document.body.classList.add('pane-resizing');
     const up = () => {
+      document.body.classList.remove('pane-resizing');
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', up);
     };
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', up);
   }
+  if (sidePanel && sidePanel !== lastPanel) setLastPanel(sidePanel);
+  const shownPanel = sidePanel || lastPanel;
   if (!boot)
     return (
       <div className="boot-screen">
@@ -956,13 +985,13 @@ function Workspace({ onLogout }) {
         '--middle-width': panelWidths.middle + 'px',
       }}
     >
-      <aside className="sidebar">
+      <aside className="sidebar" inert={!navigation && mobilePane !== 'nav'}>
         <div className="account-row">
           <button
             className="account-button"
             onClick={(e) =>
               showMenu(e, [
-                { icon: SettingsIcon, label: '设置', action: () => savedDialog('settings') },
+                { icon: SettingsIcon, label: '设置', action: openSettings },
                 { icon: LogOut, label: '退出登录', action: logout },
               ])
             }
@@ -1010,13 +1039,13 @@ function Workspace({ onLogout }) {
               onClick={() => setFoldersOpen(!foldersOpen)}
             >
               <span>文件夹</span>
-              {foldersOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+              <ChevronRight size={12} className={'chevron' + (foldersOpen ? ' open' : '')} />
             </button>
             <button aria-label="新建文件夹" title="新建文件夹" onClick={() => newFolder()}>
               <Plus size={14} />
             </button>
           </div>
-          {foldersOpen && (
+          <Collapse open={foldersOpen}>
             <nav className="folder-tree">
               {boot.folders.length ? (
                 renderFolders()
@@ -1024,11 +1053,11 @@ function Workspace({ onLogout }) {
                 <span className="nav-empty">新建文件夹来整理笔记</span>
               )}
             </nav>
-          )}
+          </Collapse>
           <div className="nav-section tag-section">
             <button aria-label="折叠或展开标签" onClick={() => setTagsOpen(!tagsOpen)}>
               <span>标签</span>
-              {tagsOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+              <ChevronRight size={12} className={'chevron' + (tagsOpen ? ' open' : '')} />
             </button>
             <button
               aria-label="新建标签"
@@ -1048,7 +1077,7 @@ function Workspace({ onLogout }) {
               <Plus size={14} />
             </button>
           </div>
-          {tagsOpen && (
+          <Collapse open={tagsOpen}>
             <nav className="tags-nav">
               {boot.tags.length ? (
                 boot.tags.map((t) => (
@@ -1074,7 +1103,7 @@ function Workspace({ onLogout }) {
                 <span className="nav-empty">用标签连接你的想法</span>
               )}
             </nav>
-          )}
+          </Collapse>
         </div>
         <div className="sidebar-footer">
           <button
@@ -1300,10 +1329,10 @@ function Workspace({ onLogout }) {
           )}
         </div>
         <div className="list-footer">
-          <Check size={12} /> 数据已连接到私有服务器
+          <Check size={12} /> 数据已同步
           <IconButton
             icon={RefreshCw}
-            label="刷新笔记列表"
+            label="同步笔记"
             onClick={() => {
               setRefreshKey((k) => k + 1);
               refresh();
@@ -1315,7 +1344,10 @@ function Workspace({ onLogout }) {
         className="pane-resizer middle-resizer"
         onPointerDown={(e) => resize(e, 'middle', 220, 700)}
       />
-      <main className={'note-panel' + (draft && sidePanel ? ' has-details' : '')}>
+      <main
+        className={'note-panel' + (draft && sidePanel ? ' has-details' : '')}
+        style={{ '--body-size': (boot.settings.fontSize || 16) + 'px' }}
+      >
         {draft ? (
           <>
             <header className="note-topbar">
@@ -1402,12 +1434,6 @@ function Workspace({ onLogout }) {
                 }}
               />
               <IconButton
-                icon={Paperclip}
-                label="查看附件"
-                active={sidePanel === 'attachments'}
-                onClick={() => setSidePanel(sidePanel === 'attachments' ? null : 'attachments')}
-              />
-              <IconButton
                 icon={Share2}
                 label="分享笔记"
                 disabled={deleted}
@@ -1420,6 +1446,12 @@ function Workspace({ onLogout }) {
                   showMenu(e, [
                     ...noteMenu(draft),
                     { separator: true },
+                    {
+                      icon: MessageSquare,
+                      label: '评论',
+                      disabled: deleted,
+                      action: () => savedDialog('comments'),
+                    },
                     { icon: Download, label: '导出为 Word', action: () => exportNote('word') },
                     { icon: Download, label: '导出为 PDF', action: () => exportNote('pdf') },
                     {
@@ -1559,78 +1591,46 @@ function Workspace({ onLogout }) {
                   </div>
                 )}
               </div>
-              {sidePanel && (
-                <aside className="detail-panel">
+              {shownPanel && (
+                <aside className={'detail-panel' + (sidePanel ? ' open' : '')} inert={!sidePanel}>
                   <header>
-                    <strong>{sidePanel === 'attachments' ? '附件' : '笔记信息'}</strong>
+                    <strong>笔记信息</strong>
                     <IconButton icon={X} label="关闭侧栏" onClick={() => setSidePanel(null)} />
                   </header>
-                  {sidePanel === 'attachments' ? (
-                    <div className="note-info">
-                      {!draft.attachments.length && <p>暂无附件</p>}
-                      {draft.attachments.map((a) => (
-                        <a key={a.id} href={'/files/' + a.id} target="_blank" rel="noreferrer">
-                          {a.name} ({bytes(a.size)})
-                        </a>
-                      ))}
-                      {!deleted && editing && (
-                        <button className="secondary" onClick={() => fileInput.current.click()}>
-                          上传附件
-                        </button>
-                      )}
-                    </div>
-                  ) : (
-                    <div className="note-info">
-                      {[
-                        ['创建时间', date(draft.created_at)],
-                        ['编辑时间', date(draft.updated_at)],
-                        ['作者', boot.user.name],
-                        [
-                          '类型',
-                          { common: '富文本笔记', markdown: 'Markdown', outline: '大纲笔记' }[
-                            draft.type
-                          ],
+                  <div className="note-info">
+                    {[
+                      ['创建时间', date(draft.created_at)],
+                      ['编辑时间', date(draft.updated_at)],
+                      ['作者', boot.user.name],
+                      [
+                        '类型',
+                        { common: '富文本笔记', markdown: 'Markdown', outline: '大纲笔记' }[
+                          draft.type
                         ],
-                        ['版本', 'v' + draft.version],
-                        [
-                          '字数',
-                          (draft.type === 'markdown'
-                            ? draft.content
-                            : new DOMParser().parseFromString(draft.content, 'text/html').body
-                                .textContent
-                          ).replace(/\s/g, '').length,
-                        ],
-                        ['附件', draft.attachments.length + ' 个'],
-                      ].map(([label, value]) => (
-                        <div key={label}>
-                          <span>{label}</span>
-                          <strong>{value}</strong>
-                        </div>
-                      ))}
-                      <button className="secondary" onClick={() => savedDialog('history')}>
-                        <HistoryIcon size={15} /> 查看历史版本
-                      </button>
-                    </div>
-                  )}
+                      ],
+                      ['版本', 'v' + draft.version],
+                      [
+                        '字数',
+                        (draft.type === 'markdown'
+                          ? draft.content
+                          : new DOMParser().parseFromString(draft.content, 'text/html').body
+                              .textContent
+                        ).replace(/\s/g, '').length,
+                      ],
+                      ['附件', draft.attachments.length + ' 个'],
+                    ].map(([label, value]) => (
+                      <div key={label}>
+                        <span>{label}</span>
+                        <strong>{value}</strong>
+                      </div>
+                    ))}
+                    <button className="secondary" onClick={() => savedDialog('history')}>
+                      <HistoryIcon size={15} /> 查看历史版本
+                    </button>
+                  </div>
                 </aside>
               )}
             </div>
-            <footer className="note-statusbar">
-              <button onClick={() => savedDialog('comments')} disabled={deleted}>
-                <MessageSquare size={13} /> 评论
-              </button>
-              <span className="spacer" />
-              <span>
-                {
-                  (draft.type === 'markdown'
-                    ? draft.content
-                    : new DOMParser().parseFromString(draft.content, 'text/html').body.textContent
-                  ).replace(/\s/g, '').length
-                }{' '}
-                字
-              </span>
-              <span>手动保存</span>
-            </footer>
           </>
         ) : (
           <div className="empty-editor">
@@ -1647,22 +1647,6 @@ function Workspace({ onLogout }) {
           </div>
         )}
       </main>
-      <input
-        ref={fileInput}
-        aria-label="附件文件"
-        hidden
-        type="file"
-        multiple
-        onChange={async (e) => {
-          try {
-            for (const f of e.target.files) await upload(f);
-            notify('附件已上传');
-          } catch (e) {
-            onError(e);
-          }
-          e.target.value = '';
-        }}
-      />
       <input
         ref={importInput}
         aria-label="Markdown 文件"
@@ -1700,7 +1684,14 @@ function Workspace({ onLogout }) {
           }
         }}
       />
-      {menu && <Dropdown {...menu} onClose={() => setMenu(null)} />}
+      {menu && (
+        <Dropdown
+          key={menu.id}
+          items={menu.items}
+          position={menu.position}
+          onClose={() => setMenu(null)}
+        />
+      )}
       {dialog?.type === 'settings' && (
         <Settings
           bootstrap={boot}

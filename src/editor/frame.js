@@ -8,6 +8,7 @@ import * as WizEditor from 'wiz-editor/client';
   const pending = new Map(),
     resources = new Map(),
     objectUrls = new Map(),
+    blobs = new Map(),
     uploads = new Set();
   let editor = null,
     note = null,
@@ -33,10 +34,15 @@ import * as WizEditor from 'wiz-editor/client';
   function addResource(asset) {
     if (!asset || !/^[a-f0-9-]{36}$/.test(asset.id) || !(asset.data instanceof ArrayBuffer)) return;
     const old = resources.get(asset.id);
-    if (old) URL.revokeObjectURL(old);
-    const url = URL.createObjectURL(new Blob([asset.data], { type: asset.mime }));
+    if (old) {
+      URL.revokeObjectURL(old);
+      blobs.delete(old);
+    }
+    const blob = new Blob([asset.data], { type: asset.mime });
+    const url = URL.createObjectURL(blob);
     resources.set(asset.id, url);
     objectUrls.set(url, '/files/' + asset.id);
+    blobs.set(url, blob);
   }
   function resourceUrl(src) {
     const id = String(src).match(/^(?:wix-resource:|\/files\/)([a-f0-9-]{36})$/)?.[1];
@@ -173,7 +179,7 @@ import * as WizEditor from 'wiz-editor/client';
         themeMode: note.theme || 'light',
         hideComments: true,
         serverUrl: '',
-        placeholder: '输入文字，或按 / 插入内容',
+        placeholder: '输入文字，或按 + 插入内容',
         resourceProtocol: ['wix-resource:'],
         callbacks: {
           onBeginInitDrawIo: () => {
@@ -192,6 +198,12 @@ import * as WizEditor from 'wiz-editor/client';
           },
           onError: (_editor, error) => report(error),
           onBuildResourceUrl: (_editor, src) => resourceUrl(src),
+          // The default download is a credentialed XHR, which fails for blob: URLs in this
+          // origin-less sandbox. Without this, reopening a saved diagram starts from an empty canvas.
+          onDownloadImage: (_editor, url, download) => {
+            const blob = blobs.get(url);
+            return blob ? new File([blob], 'resource', { type: blob.type }) : download(url);
+          },
           onClickLink: (_editor, event, anchor) => {
             event.preventDefault();
             send({ action: 'open-link', url: anchor.getAttribute('href') || '' });

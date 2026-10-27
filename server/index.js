@@ -806,7 +806,7 @@ export function createApp({
     res.once('close', cleanup);
     upload.single('file')(req, res, next);
   }
-  app.post(['/api/import/zip', '/api/import/ziw'], receiveUpload, (req, res) => {
+  app.post('/api/import/zip', receiveUpload, (req, res) => {
     if (!req.file) throw error(400, '请选择未加密的 ZIP 文件');
     if (req.file.size > 100 * 1024 * 1024) throw error(413, 'ZIP 压缩文件不能超过 100MB');
     const parsed = readZip(readFileSync(req.file.path), Math.min(uploadLimit, 100 * 1024 * 1024)),
@@ -866,7 +866,7 @@ export function createApp({
     }
     res.status(201).json(noteDetail(imported));
   });
-  app.get(['/api/notes/:id/export/zip', '/api/notes/:id/export/ziw'], (req, res) => {
+  app.get('/api/notes/:id/export/zip', (req, res) => {
     const row = note(req.params.id, owner(req)),
       files = all('SELECT * FROM attachments WHERE note_id=?', row.id);
     if (files.reduce((total, f) => total + f.size, 0) > uploadLimit)
@@ -1189,7 +1189,7 @@ export function createApp({
   app.use('/api', (_req, _res, next) => next(error(404, '接口不存在')));
   const dist = path.join(project, 'dist');
   app.use(express.static(dist, { index: false, maxAge: '1h' }));
-  app.get(['/', '/xapp', '/xapp/', '/wapp', '/wapp/', '/s/:token'], (_req, res) => {
+  app.get(['/', '/s/:token'], (_req, res) => {
     if (!existsSync(path.join(dist, 'index.html')))
       return res
         .status(503)

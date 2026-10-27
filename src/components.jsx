@@ -21,13 +21,14 @@ export function SavedTime({ value }) {
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     setNow(Date.now());
-    const timer = setInterval(() => setNow(Date.now()), 1000);
+    const timer = setInterval(() => setNow(Date.now()), 5000);
     return () => clearInterval(timer);
   }, [value]);
-  const elapsed = timeAgo(value, now);
+  // Anything saved within the last minute reads as "just now" rather than a ticking second count.
+  const recent = now - new Date(value).getTime() < 60000;
   return (
     <time dateTime={value} title={date(value)}>
-      {elapsed === '刚刚' ? '保存于刚刚' : `保存于 ${elapsed}`}
+      {recent ? '保存于刚刚' : `保存于 ${timeAgo(value, now)}`}
     </time>
   );
 }
@@ -163,32 +164,53 @@ export function PromptDialog({
     </Modal>
   );
 }
+export function Collapse({ open, children }) {
+  return (
+    <div className={'collapse' + (open ? ' open' : '')} inert={!open}>
+      <div className="collapse-inner">{children}</div>
+    </div>
+  );
+}
 export function Dropdown({ items, position, onClose }) {
   const ref = useRef(),
-    closeRef = useRef(onClose);
+    closeRef = useRef(onClose),
+    timer = useRef();
+  const [leaving, setLeaving] = useState(false);
   closeRef.current = onClose;
+  // Play the exit animation before the parent unmounts the menu.
+  const dismiss = useCallback(() => {
+    if (timer.current) return;
+    setLeaving(true);
+    timer.current = setTimeout(() => closeRef.current(), 120);
+  }, []);
   useEffect(() => {
     const close = (e) => {
-      if (!ref.current?.contains(e.target)) closeRef.current();
+      if (!ref.current?.contains(e.target)) dismiss();
     };
     const key = (e) => {
-      if (e.key === 'Escape') closeRef.current();
+      if (e.key === 'Escape') dismiss();
     };
     document.addEventListener('mousedown', close);
     document.addEventListener('keydown', key);
     return () => {
+      clearTimeout(timer.current);
       document.removeEventListener('mousedown', close);
       document.removeEventListener('keydown', key);
     };
-  }, []);
+  }, [dismiss]);
+  const top = Math.max(8, Math.min(position.y, window.innerHeight - items.length * 35 - 16)),
+    left = Math.max(8, Math.min(position.x, window.innerWidth - 230));
   return (
     <div
       ref={ref}
       role="menu"
-      className="dropdown"
+      className={'dropdown' + (leaving ? ' leaving' : '')}
+      inert={leaving}
+      aria-hidden={leaving || undefined}
       style={{
-        top: Math.max(8, Math.min(position.y, window.innerHeight - items.length * 35 - 16)),
-        left: Math.max(8, Math.min(position.x, window.innerWidth - 230)),
+        top,
+        left,
+        transformOrigin: `${left < position.x ? 'right' : 'left'} ${top < position.y ? 'bottom' : 'top'}`,
       }}
     >
       {items.map((item, i) =>
@@ -201,7 +223,7 @@ export function Dropdown({ items, position, onClose }) {
             className={item.danger ? 'danger-text' : ''}
             disabled={item.disabled}
             onClick={() => {
-              onClose();
+              dismiss();
               item.action();
             }}
           >

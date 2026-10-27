@@ -6,10 +6,13 @@ import { download } from './api.js';
 // The same document styles are used by both export formats.
 const documentStyles = `
   .export-document { font-family: "Microsoft YaHei", "PingFang SC", "Noto Sans CJK SC", "Noto Sans SC", system-ui, sans-serif; font-size: 11pt; line-height: 1.65; color: #202124; background: #fff; overflow-wrap: break-word; }
-  .export-document h1, .export-document h2, .export-document h3, .export-document h4 { font-family: inherit; color: #17191c; line-height: 1.3; margin: 1em 0 .5em; }
-  .export-document h1 { font-size: 22pt; margin-top: 0; }
-  .export-document h2 { font-size: 16pt; }
+  .export-document h1, .export-document h2, .export-document h3, .export-document h4, .export-document h5 { font-family: inherit; font-weight: bold; color: #17191c; line-height: 1.35; margin: 1em 0 .4em; }
+  .export-document h1.export-title { font-size: 22pt; margin-top: 0; }
+  .export-document h1 { font-size: 18pt; }
+  .export-document h2 { font-size: 15pt; }
   .export-document h3 { font-size: 13pt; }
+  .export-document h4 { font-size: 12pt; }
+  .export-document h5 { font-size: 11pt; }
   .export-document p { margin: 0 0 .75em; }
   .export-document img { max-width: 100%; height: auto; }
   .export-document table { border-collapse: collapse; width: 100%; margin: .75em 0; }
@@ -40,6 +43,7 @@ export async function exportDocument(note, format, safeName) {
   const parsed = new DOMParser().parseFromString(html, 'text/html');
   await inlineAttachments(parsed);
   const title = document.createElement('h1');
+  title.className = 'export-title';
   title.textContent = note.title || '无标题笔记';
   const article = document.createElement('div');
   article.className = 'export-document';
