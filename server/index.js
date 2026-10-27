@@ -242,7 +242,7 @@ export function createApp({
     if (req.path === '/editor/frame.html')
       res.set(
         'Content-Security-Policy',
-        "default-src 'none'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src data: blob:; font-src 'self' data:; connect-src 'none'; frame-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'; sandbox allow-scripts",
+        "default-src 'none'; script-src 'self' 'unsafe-eval' https://www.draw.io https://cdn.jsdelivr.net; style-src 'self' 'unsafe-inline'; img-src data: blob: https:; font-src 'self' data:; connect-src blob:; frame-src https://embed.diagrams.net; base-uri 'none'; form-action 'none'; frame-ancestors 'self'; sandbox allow-scripts",
       );
     if (req.path.startsWith('/api') || req.path.startsWith('/files'))
       res.set('Cache-Control', 'no-store');
@@ -324,7 +324,7 @@ export function createApp({
         ids.push(fid);
       }
       insertNote(id, {
-        title: '欢迎使用灵眸笔记',
+        title: '欢迎使用 WixNote 灵眸笔记',
         folder_id: ids[0],
         content:
           '<h1>让知识，有迹可循</h1><p>欢迎来到你的私人笔记空间。记录想法、整理知识，把重要的内容留在自己手中。</p><h2>从一篇笔记开始</h2><p>点击左侧「新建笔记」，或使用 <strong>Ctrl / ⌘ + N</strong>，开始记录。</p><ul><li>用文件夹与标签整理内容</li><li>用富文本或大纲记录想法</li><li>收藏重要笔记，全文搜索快速找到内容</li><li>点击保存图标保存修改，历史版本和回收站守护你的记录</li></ul><blockquote><p>好记性，不如一篇好笔记。</p></blockquote><h2>数据属于你</h2><p>在设置中导出完整备份。所有笔记与附件都保存在你的服务器上。</p>',

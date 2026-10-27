@@ -40,8 +40,10 @@ import {
   FolderInput,
   Link2,
   Save,
+  Pencil,
 } from 'lucide-react';
 import TurndownService from 'turndown';
+import { exportDocument } from './export.js';
 import { marked } from 'marked';
 import DOMPurify from 'dompurify';
 import NoteEditor, { SafeContent } from './Editor.jsx';
@@ -242,6 +244,7 @@ function Workspace({ onLogout }) {
   const [boot, setBoot] = useState(null),
     [notes, setNotes] = useState([]),
     [draft, setDraft] = useState(null),
+    [editing, setEditing] = useState(false),
     [scope, setScope] = useState({ view: 'all' }),
     [query, setQuery] = useState(''),
     [search, setSearch] = useState(''),
@@ -274,7 +277,6 @@ function Workspace({ onLogout }) {
     searchInput = useRef(),
     fileInput = useRef(),
     importInput = useRef(),
-    zipInput = useRef(),
     editorRef = useRef(),
     toastTimer = useRef();
   const notify = useCallback((value, type = 'success') => {
@@ -315,12 +317,22 @@ function Workspace({ onLogout }) {
   const assign = useCallback((row) => {
     openSequence.current++;
     attachmentEpoch.current++;
-    draftRef.current = row;
     serverRef.current = row;
-    dirtyRef.current = 0;
+    let recovered = null;
+    try {
+      const stored = JSON.parse(localStorage.getItem('wixnote-draft-' + row?.id));
+      if (stored && stored.version === row?.version)
+        recovered = { ...row, ...stored, attachments: row.attachments };
+    } catch {
+      /* Ignore invalid local drafts. */
+    }
+    row = recovered || row;
+    draftRef.current = row;
+    dirtyRef.current = recovered ? 1 : 0;
     nativeDirtyRef.current = false;
     setDraft(row);
-    setSaveStatus('saved');
+    setSaveStatus(recovered ? 'dirty' : 'saved');
+    setEditing(!!recovered);
     setResetKey((k) => k + 1);
   }, []);
   const summary = (note) => ({
@@ -365,6 +377,9 @@ function Workspace({ onLogout }) {
           serverRef.current = saved;
           if (dirtyRef.current === generation && !nativeDirtyRef.current) {
             dirtyRef.current = 0;
+            localStorage.removeItem('wixnote-draft-' + saved.id);
+            if (localStorage.getItem('wixnote-active-draft') === saved.id)
+              localStorage.removeItem('wixnote-active-draft');
             draftRef.current = saved;
             setDraft(saved);
             setSaveStatus('saved');
@@ -418,6 +433,15 @@ function Workspace({ onLogout }) {
     if (!draftRef.current || draftRef.current.deleted_at) return;
     draftRef.current = { ...draftRef.current, ...patch };
     dirtyRef.current++;
+    try {
+      localStorage.setItem(
+        'wixnote-draft-' + draftRef.current.id,
+        JSON.stringify(draftRef.current),
+      );
+      localStorage.setItem('wixnote-active-draft', draftRef.current.id);
+    } catch {
+      /* Storage may be unavailable. */
+    }
     setDraft(draftRef.current);
     setSaveStatus('dirty');
   }, []);
@@ -455,7 +479,9 @@ function Workspace({ onLogout }) {
         setNotes(rows);
         setListLoading(false);
         if (!rows.some((r) => r.id === draftRef.current?.id)) {
-          if (rows[0]) await openNote(rows[0].id, false);
+          const recoveredId = localStorage.getItem('wixnote-active-draft');
+          const target = rows.find((row) => row.id === recoveredId) || rows[0];
+          if (target) await openNote(target.id, false);
           else if (await ensureSaved()) {
             if (seq === listSequence.current) {
               openSequence.current++;
@@ -523,6 +549,7 @@ function Workspace({ onLogout }) {
       });
       listSequence.current++;
       assign(row);
+      setEditing(true);
       setNotes((rows) => [summary(row), ...rows]);
       if (scope.view === 'trash' || scope.view === 'favorites') setScope({ view: 'all' });
       setRefreshKey((n) => n + 1);
@@ -594,6 +621,14 @@ function Workspace({ onLogout }) {
     const row = draftRef.current;
     if (!row) return;
     const safeName = (row.title || '无标题笔记').replace(/[<>:"/\\|?*]/g, '_');
+    if (format === 'word' || format === 'pdf') {
+      try {
+        await exportDocument(row, format, safeName);
+      } catch (error) {
+        onError(error);
+      }
+      return;
+    }
     if (format === 'zip') {
       try {
         const response = await fetch('/api/notes/' + row.id + '/export/zip');
@@ -1100,7 +1135,11 @@ function Workspace({ onLogout }) {
                     action: () => createNote(outlineTemplate),
                   },
                   { separator: true },
-                  { icon: Upload, label: '导入 ZIP 文件…', action: () => zipInput.current.click() },
+                  {
+                    icon: Upload,
+                    label: '导入 Markdown 文件…',
+                    action: () => importInput.current.click(),
+                  },
                   {
                     icon: BookOpen,
                     label: '从模板新建…',
@@ -1329,11 +1368,15 @@ function Workspace({ onLogout }) {
                 </span>
               </div>
               <IconButton
-                icon={Save}
-                label="保存笔记"
+                icon={editing ? Save : Pencil}
+                label={editing ? '保存笔记' : '编辑笔记'}
                 disabled={deleted || saveStatus === 'saving'}
                 active={saveStatus === 'dirty'}
-                onClick={() => flush()}
+                onClick={async () => {
+                  if (editing) {
+                    if (await flush()) setEditing(false);
+                  } else setEditing(true);
+                }}
               />
               <IconButton
                 icon={Info}
@@ -1353,9 +1396,9 @@ function Workspace({ onLogout }) {
               />
               <IconButton
                 icon={Paperclip}
-                label="上传附件"
-                disabled={deleted}
-                onClick={() => fileInput.current.click()}
+                label="查看附件"
+                active={sidePanel === 'attachments'}
+                onClick={() => setSidePanel(sidePanel === 'attachments' ? null : 'attachments')}
               />
               <IconButton
                 icon={Share2}
@@ -1370,7 +1413,8 @@ function Workspace({ onLogout }) {
                   showMenu(e, [
                     ...noteMenu(draft),
                     { separator: true },
-                    { icon: Download, label: '导出为 ZIP', action: () => exportNote('zip') },
+                    { icon: Download, label: '导出为 Word', action: () => exportNote('word') },
+                    { icon: Download, label: '导出为 PDF', action: () => exportNote('pdf') },
                     {
                       icon: Download,
                       label: '导出为 Markdown',
@@ -1378,12 +1422,6 @@ function Workspace({ onLogout }) {
                     },
                     { icon: Download, label: '导出为 HTML', action: () => exportNote('html') },
                     { icon: Download, label: '导出为纯文本', action: () => exportNote('text') },
-                    {
-                      icon: Upload,
-                      label: '导入 Markdown / HTML',
-                      disabled: deleted,
-                      action: () => importInput.current.click(),
-                    },
                     {
                       icon: focus ? Minimize2 : Maximize2,
                       label: focus ? '退出专注模式' : '专注模式',
@@ -1442,7 +1480,7 @@ function Workspace({ onLogout }) {
                 className="note-title"
                 aria-label="笔记标题"
                 value={draft.title}
-                readOnly={deleted}
+                readOnly={deleted || !editing}
                 placeholder="无标题笔记"
                 maxLength={500}
                 onChange={(e) => edit({ title: e.target.value })}
@@ -1463,7 +1501,7 @@ function Workspace({ onLogout }) {
                   }}
                   theme={boot.settings.theme || 'light'}
                   onUpload={upload}
-                  readOnly={deleted}
+                  readOnly={deleted || !editing}
                   editorRef={editorRef}
                   fontSize={boot.settings.fontSize || 16}
                   onError={onError}
@@ -1517,40 +1555,56 @@ function Workspace({ onLogout }) {
               {sidePanel && (
                 <aside className="detail-panel">
                   <header>
-                    <strong>笔记信息</strong>
+                    <strong>{sidePanel === 'attachments' ? '附件' : '笔记信息'}</strong>
                     <IconButton icon={X} label="关闭侧栏" onClick={() => setSidePanel(null)} />
                   </header>
-                  <div className="note-info">
-                    {[
-                      ['创建时间', date(draft.created_at)],
-                      ['编辑时间', date(draft.updated_at)],
-                      ['作者', boot.user.name],
-                      [
-                        '类型',
-                        { common: '富文本笔记', markdown: 'Markdown', outline: '大纲笔记' }[
-                          draft.type
+                  {sidePanel === 'attachments' ? (
+                    <div className="note-info">
+                      {!draft.attachments.length && <p>暂无附件</p>}
+                      {draft.attachments.map((a) => (
+                        <a key={a.id} href={'/files/' + a.id} target="_blank" rel="noreferrer">
+                          {a.name} ({bytes(a.size)})
+                        </a>
+                      ))}
+                      {!deleted && editing && (
+                        <button className="secondary" onClick={() => fileInput.current.click()}>
+                          上传附件
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <div className="note-info">
+                      {[
+                        ['创建时间', date(draft.created_at)],
+                        ['编辑时间', date(draft.updated_at)],
+                        ['作者', boot.user.name],
+                        [
+                          '类型',
+                          { common: '富文本笔记', markdown: 'Markdown', outline: '大纲笔记' }[
+                            draft.type
+                          ],
                         ],
-                      ],
-                      ['版本', 'v' + draft.version],
-                      [
-                        '字数',
-                        (draft.type === 'markdown'
-                          ? draft.content
-                          : new DOMParser().parseFromString(draft.content, 'text/html').body
-                              .textContent
-                        ).replace(/\s/g, '').length,
-                      ],
-                      ['附件', draft.attachments.length + ' 个'],
-                    ].map(([label, value]) => (
-                      <div key={label}>
-                        <span>{label}</span>
-                        <strong>{value}</strong>
-                      </div>
-                    ))}
-                    <button className="secondary" onClick={() => savedDialog('history')}>
-                      <HistoryIcon size={15} /> 查看历史版本
-                    </button>
-                  </div>
+                        ['版本', 'v' + draft.version],
+                        [
+                          '字数',
+                          (draft.type === 'markdown'
+                            ? draft.content
+                            : new DOMParser().parseFromString(draft.content, 'text/html').body
+                                .textContent
+                          ).replace(/\s/g, '').length,
+                        ],
+                        ['附件', draft.attachments.length + ' 个'],
+                      ].map(([label, value]) => (
+                        <div key={label}>
+                          <span>{label}</span>
+                          <strong>{value}</strong>
+                        </div>
+                      ))}
+                      <button className="secondary" onClick={() => savedDialog('history')}>
+                        <HistoryIcon size={15} /> 查看历史版本
+                      </button>
+                    </div>
+                  )}
                 </aside>
               )}
             </div>
@@ -1603,79 +1657,40 @@ function Workspace({ onLogout }) {
         }}
       />
       <input
-        ref={zipInput}
-        aria-label="ZIP 文件"
+        ref={importInput}
+        aria-label="Markdown 文件"
         hidden
         type="file"
-        accept=".zip"
+        accept=".md,.markdown"
         multiple
         onChange={async (e) => {
-          if (!(await ensureSaved())) {
-            e.target.value = '';
-            return;
-          }
-          try {
-            let last,
-              count = 0;
-            for (const file of e.target.files) {
-              const form = new FormData();
-              form.append('file', file);
-              if (scope.folder) form.append('folder_id', scope.folder);
-              last = await api('/import/zip', { method: 'POST', body: form });
-              count++;
-            }
-            if (last) {
-              assign(last);
-              setScope({ view: 'all' });
-              setRefreshKey((k) => k + 1);
-              refresh();
-              setMobilePane('note');
-              notify(`已导入 ${count} 篇 ZIP 笔记`);
-            }
-          } catch (e) {
-            onError(e);
-          }
+          const files = [...e.target.files];
           e.target.value = '';
-        }}
-      />
-      <input
-        ref={importInput}
-        hidden
-        type="file"
-        accept=".md,.markdown,.html,.htm,.txt"
-        onChange={async (e) => {
-          const file = e.target.files[0];
-          if (!file || !draftRef.current) return;
-          const targetId = draftRef.current.id;
+          if (!files.length || !(await ensureSaved())) return;
           try {
-            if (file.size > 10 * 1024 * 1024) throw new Error('正文导入文件不能超过 10MB');
-            const source = await file.text(),
-              isMarkdown = /\.(md|markdown)$/i.test(file.name),
-              html = isMarkdown
-                ? marked.parse(source)
-                : /\.html?$/i.test(file.name)
-                  ? source
-                  : source
-                      .split('\n')
-                      .map((t) => '<p>' + t.replace(/&/g, '&amp;').replace(/</g, '&lt;') + '</p>')
-                      .join('');
-            if (draftRef.current?.id !== targetId)
-              throw new Error('笔记已切换，请重新选择导入文件');
-            edit({
-              content:
-                draftRef.current.type === 'markdown'
-                  ? isMarkdown
-                    ? source
-                    : new TurndownService().turndown(source)
-                  : DOMPurify.sanitize(html),
-            });
-            edit({ editor_data: null });
-            setResetKey((k) => k + 1);
-            notify('文件已导入当前笔记');
-          } catch (e) {
-            onError(e);
+            let last;
+            for (const file of files) {
+              if (file.size > 10 * 1024 * 1024) throw new Error('正文导入文件不能超过 10MB');
+              last = await api('/notes', {
+                method: 'POST',
+                body: {
+                  title: file.name.replace(/\.(md|markdown)$/i, '') || '无标题笔记',
+                  content: await file.text(),
+                  type: 'markdown',
+                  folder_id: scope.folder || boot.folders[0]?.id || null,
+                  tags: scope.tag ? [scope.tag] : [],
+                },
+              });
+            }
+            assign(last);
+            setScope({ view: 'all' });
+            setRefreshKey((k) => k + 1);
+            refresh();
+            setMobilePane('note');
+            notify(`已导入 ${files.length} 篇 Markdown 笔记`);
+          } catch (error) {
+            onError(error);
           }
-          e.target.value = '';
         }}
       />
       {menu && <Dropdown {...menu} onClose={() => setMenu(null)} />}

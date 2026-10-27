@@ -64,14 +64,20 @@ export default function NoteEditor({
     async function asset(item) {
       const response = await fetch('/files/' + item.id, { credentials: 'same-origin' });
       if (!response.ok) throw new Error('无法读取编辑器图片');
-      return { id: item.id, mime: item.mime, data: await response.arrayBuffer() };
+      return {
+        id: item.id,
+        mime: item.name === 'drawio.svg' ? 'image/svg+xml' : item.mime,
+        data: await response.arrayBuffer(),
+      };
     }
     async function initialize() {
       if (initialized || !active) return;
       initialized = true;
       try {
         const results = await Promise.allSettled(
-          note.attachments.filter((a) => a.mime.startsWith('image/')).map(asset),
+          note.attachments
+            .filter((a) => a.mime.startsWith('image/') || a.name === 'drawio.svg')
+            .map(asset),
         );
         if (!active) return;
         const assets = results

@@ -15,7 +15,8 @@ import * as WizEditor from 'wiz-editor/client';
     dirty = false,
     revision = 0,
     timer = null,
-    sequence = 0;
+    sequence = 0,
+    diagramTimer = null;
   const send = (message) =>
     parent.postMessage({ ...message, channel, bridge: 'wix-editor-v1' }, parentOrigin);
   function request(action, data) {
@@ -108,7 +109,13 @@ import * as WizEditor from 'wiz-editor/client';
       await new Promise((resolve) => setTimeout(resolve, 0));
     }
     const capturedRevision = revision;
-    const document = JSON.parse(JSON.stringify(editor.data()));
+    const document = JSON.parse(
+      JSON.stringify(editor.data(), (_key, value) =>
+        typeof value === 'string' && objectUrls.has(value)
+          ? objectUrls.get(value).replace('/files/', 'wix-resource:')
+          : value,
+      ),
+    );
     const content = note.type === 'markdown' ? await editor.toMarkdown() : nativeHtml();
     if (revision !== capturedRevision) {
       if (attempt >= 8) throw new Error('正文仍在变化，请稍后重试保存');
@@ -141,11 +148,16 @@ import * as WizEditor from 'wiz-editor/client';
     editor?.destroy();
     note = message.note;
     for (const asset of message.assets || []) addResource(asset);
+    const source = new DOMParser().parseFromString(note.content || '<p></p>', 'text/html');
+    for (const image of source.querySelectorAll('img')) {
+      const url = resourceUrl(image.getAttribute('src'));
+      if (url) image.setAttribute('src', url);
+    }
     const data =
       note.document ||
       (note.type === 'markdown'
         ? WizEditor.markdown2Doc(note.content || '')
-        : WizEditor.html2Doc(note.content || '<p></p>'));
+        : WizEditor.html2Doc(source.body.innerHTML));
     const nativeDocument =
       data && Array.isArray(data.blocks) && data.blocks.length
         ? data
@@ -164,6 +176,16 @@ import * as WizEditor from 'wiz-editor/client';
         placeholder: '输入文字，或按 / 插入内容',
         resourceProtocol: ['wix-resource:'],
         callbacks: {
+          onBeginInitDrawIo: () => {
+            clearTimeout(diagramTimer);
+            diagramTimer = setTimeout(() => {
+              // Release the plugin's exclusive block and close its loading overlay.
+              window.postMessage(JSON.stringify({ event: 'init' }), '*');
+              window.postMessage(JSON.stringify({ event: 'exit' }), '*');
+              report(new Error('流程图编辑器加载失败，请检查网络后重试'));
+            }, 20000);
+          },
+          onEndInitDrawIo: () => clearTimeout(diagramTimer),
           onChange: changed,
           onStatusChanged: (_editor, isDirty) => {
             if (isDirty) changed();
@@ -194,7 +216,8 @@ import * as WizEditor from 'wiz-editor/client';
         appId: 'selfhosted',
         docId: note.id,
         displayName: 'Local',
-        permission: note.readOnly ? 'r' : 'w',
+        // Read-only mode is controlled by setReadOnly and can change without reloading.
+        permission: 'w',
         token: '',
       },
     );

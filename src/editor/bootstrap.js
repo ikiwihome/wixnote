@@ -18,4 +18,46 @@
       },
     });
   }
+  // The opaque editor origin cannot use IndexedDB. WizEditor's diagram plugin
+  // uses it for temporary drafts, so provide the small asynchronous subset it needs.
+  const stores = new Map();
+  const request = (operation) => {
+    const result = {};
+    setTimeout(() => {
+      try {
+        result.result = operation();
+        result.onsuccess?.({ target: result });
+      } catch (error) {
+        result.error = error;
+        result.onerror?.({ target: result });
+      }
+    }, 0);
+    return result;
+  };
+  Object.defineProperty(window, 'indexedDB', {
+    configurable: true,
+    value: {
+      open(name) {
+        return request(() => {
+          if (!stores.has(name)) stores.set(name, new Map());
+          const values = stores.get(name);
+          return {
+            createObjectStore() {},
+            transaction() {
+              return {
+                objectStore: () => ({
+                  get: (key) => request(() => values.get(key)),
+                  put: (item) =>
+                    request(() => {
+                      values.set(item.key, item);
+                      return item.key;
+                    }),
+                }),
+              };
+            },
+          };
+        });
+      },
+    },
+  });
 })();

@@ -26,6 +26,8 @@
     "dompurify": "^3.2.0",
     "entities": "^8.1.0",
     "express": "^5.1.0",
+    "html-docx-js-typescript": "^0.1.5",
+    "html2pdf.js": "^0.14.0",
     "lucide-react": "^0.468.0",
     "marked": "^17.0.0",
     "multer": "^2.0.2",

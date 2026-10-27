@@ -25,8 +25,8 @@ wixnote 灵眸笔记 是一个独立的 React + Express + SQLite 笔记应用，
 
 **数据自主**
 
-- 导出 HTML / Markdown / 纯文本，导入 Markdown / HTML 到当前笔记。
-- 未加密 ZIP 文件导入 / 导出，原生编辑器块与正文同时保留。
+- 导出 Word、PDF、HTML、Markdown 和纯文本；导入 Markdown 文件为新笔记。
+- 未保存的笔记草稿保存在当前浏览器中，刷新后可恢复。
 - JSON 完整备份与追加式恢复。
 - 多账户独立数据、会话登录、修改密码、深浅色主题、字号、手机导航、专注模式与快捷键（`Ctrl/⌘ + S/K/N`）。
 
