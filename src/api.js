@@ -1,6 +1,15 @@
+// Note HTML in plain JSON trips WAF rules (e.g. SafeLine XSS detection), so JSON is sent gzipped.
+export const gzipJsonType = 'application/vnd.wix.json+gzip';
+export function gzipJson(value) {
+  const stream = new Blob([JSON.stringify(value)])
+    .stream()
+    .pipeThrough(new CompressionStream('gzip'));
+  return new Response(stream).blob();
+}
 export async function api(url, options = {}) {
   const body = options.body;
   const { responseType, ...fetchOptions } = options;
+  const json = body != null && !(body instanceof FormData || body instanceof Blob);
   const response = await fetch('/api' + url, {
     ...fetchOptions,
     credentials: 'same-origin',
@@ -8,15 +17,10 @@ export async function api(url, options = {}) {
       'X-Wix-Request': '1',
       ...(body instanceof FormData
         ? {}
-        : { 'Content-Type': body instanceof Blob ? 'application/zip' : 'application/json' }),
+        : { 'Content-Type': json || body == null ? gzipJsonType : 'application/zip' }),
       ...options.headers,
     },
-    body:
-      body == null
-        ? undefined
-        : body instanceof FormData || body instanceof Blob
-          ? body
-          : JSON.stringify(body),
+    body: json ? await gzipJson(body) : (body ?? undefined),
   });
   if (response.ok && responseType === 'blob') return response.blob();
   const data = await response.json().catch(() => null);

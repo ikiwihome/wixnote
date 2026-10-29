@@ -25,7 +25,6 @@ import {
   Check,
   Loader2,
   AlertCircle,
-  RefreshCw,
   ArrowDownWideNarrow,
   Copy,
   Download,
@@ -316,6 +315,7 @@ function Workspace({ onLogout }) {
     [expanded, setExpanded] = useState({}),
     [tagsOpen, setTagsOpen] = useState(true),
     [foldersOpen, setFoldersOpen] = useState(true),
+    [folderDrop, setFolderDrop] = useState(null),
     [menu, setMenu] = useState(null),
     [dialog, setDialog] = useState(null),
     [toast, setToast] = useState(null),
@@ -331,6 +331,8 @@ function Workspace({ onLogout }) {
     [navigation, setNavigation] = useState(true),
     [panelWidths, setPanelWidths] = useState({ left: 240, middle: 300 });
   const draftRef = useRef(null),
+    draggedFolder = useRef(null),
+    editingRef = useRef(false),
     serverRef = useRef(null),
     dirtyRef = useRef(0),
     nativeDirtyRef = useRef(false),
@@ -365,20 +367,6 @@ function Workspace({ onLogout }) {
     refresh();
     return () => {
       clearTimeout(toastTimer.current);
-    };
-  }, [refresh]);
-  useEffect(() => {
-    const sync = async () => {
-      if (document.visibilityState !== 'visible') return;
-      if (await refresh(true)) setRefreshKey((k) => k + 1);
-    };
-    const timer = setInterval(sync, 30000);
-    window.addEventListener('online', sync);
-    document.addEventListener('visibilitychange', sync);
-    return () => {
-      clearInterval(timer);
-      window.removeEventListener('online', sync);
-      document.removeEventListener('visibilitychange', sync);
     };
   }, [refresh]);
   useEffect(() => {
@@ -581,6 +569,39 @@ function Workspace({ onLogout }) {
         }
       });
   }, [ready, scope, search, sort, direction, refreshKey, assign, ensureSaved, onError, openNote]);
+  useEffect(() => {
+    editingRef.current = editing;
+  }, [editing]);
+  const listQuery = new URLSearchParams({ ...scope, q: search, sort, direction }).toString();
+  // Pick up changes from other tabs and devices quietly: no loading state, and state only
+  // changes when the server data differs, so the list doesn't flash.
+  useEffect(() => {
+    if (!ready) return;
+    const clean = () =>
+      !editingRef.current && !dirtyRef.current && !nativeDirtyRef.current && !pendingRef.current;
+    const sync = async () => {
+      if (document.visibilityState !== 'visible') return;
+      const seq = listSequence.current;
+      const [data, rows] = await Promise.all([api('/bootstrap'), api('/notes?' + listQuery)]).catch(
+        () => [],
+      );
+      if (!rows || seq !== listSequence.current) return;
+      setBoot((old) => (JSON.stringify(old) === JSON.stringify(data) ? old : data));
+      setNotes((old) => (JSON.stringify(old) === JSON.stringify(rows) ? old : rows));
+      const fresh = rows.find((r) => r.id === draftRef.current?.id);
+      if (!fresh || fresh.version === serverRef.current?.version || !clean()) return;
+      const row = await api('/notes/' + fresh.id).catch(() => null);
+      if (row && draftRef.current?.id === row.id && clean()) assign(row);
+    };
+    const timer = setInterval(sync, 30000);
+    window.addEventListener('online', sync);
+    document.addEventListener('visibilitychange', sync);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('online', sync);
+      document.removeEventListener('visibilitychange', sync);
+    };
+  }, [ready, listQuery, assign]);
   useEffect(() => {
     const before = (e) => {
       if (dirtyRef.current || nativeDirtyRef.current || pendingRef.current) {
@@ -965,28 +986,67 @@ function Workspace({ onLogout }) {
         return (
           <React.Fragment key={f.id}>
             <div
-              className={'folder-row nav-row ' + (active ? 'selected' : '')}
+              className={
+                'folder-row nav-row ' +
+                (active ? 'selected' : '') +
+                (folderDrop?.id === f.id ? ' drop-' + folderDrop.zone : '')
+              }
               style={{ paddingLeft: 6 + depth * 14 }}
               draggable
               onDragStart={(e) => {
+                e.stopPropagation();
+                draggedFolder.current = f.id;
                 e.dataTransfer.setData('folder', f.id);
               }}
-              onDragOver={(e) => e.preventDefault()}
+              onDragEnd={() => {
+                draggedFolder.current = null;
+                setFolderDrop(null);
+              }}
+              onDragOver={(e) => {
+                e.preventDefault();
+                // Folders drop above/below the row to reorder, or onto its middle to nest.
+                let zone = 'inside';
+                if (draggedFolder.current) {
+                  if (draggedFolder.current === f.id) return setFolderDrop(null);
+                  const rect = e.currentTarget.getBoundingClientRect(),
+                    y = (e.clientY - rect.top) / rect.height;
+                  zone = y < 0.3 ? 'before' : y > 0.7 ? 'after' : 'inside';
+                }
+                if (folderDrop?.id !== f.id || folderDrop.zone !== zone)
+                  setFolderDrop({ id: f.id, zone });
+              }}
+              onDragLeave={(e) => {
+                if (!e.currentTarget.contains(e.relatedTarget)) setFolderDrop(null);
+              }}
               onDrop={async (e) => {
                 e.preventDefault();
                 e.stopPropagation();
+                const zone = folderDrop?.id === f.id ? folderDrop.zone : 'inside';
+                setFolderDrop(null);
+                draggedFolder.current = null;
                 try {
                   const id = e.dataTransfer.getData('note'),
                     folderId = e.dataTransfer.getData('folder');
                   if (id) await mutateNote(id, { folder_id: f.id });
-                  else if (folderId) {
-                    await api('/folders/' + folderId, {
-                      method: 'PATCH',
-                      body: { parent_id: f.id },
-                    });
+                  else if (folderId && folderId !== f.id) {
+                    const siblings = boot.folders.filter(
+                      (c) => c.parent_id === f.parent_id && c.id !== folderId,
+                    );
+                    const body =
+                      zone === 'inside'
+                        ? { parent_id: f.id, before: null }
+                        : {
+                            parent_id: f.parent_id,
+                            before:
+                              zone === 'before'
+                                ? f.id
+                                : (siblings[siblings.findIndex((c) => c.id === f.id) + 1]?.id ??
+                                  null),
+                          };
+                    await api('/folders/' + folderId + '/move', { method: 'POST', body });
                     await refresh();
                   }
-                  setExpanded((s) => ({ ...s, [f.id]: true }));
+                  if (zone === 'inside') setExpanded((s) => ({ ...s, [f.id]: true }));
                 } catch (e) {
                   onError(e);
                 }
@@ -1414,17 +1474,6 @@ function Workspace({ onLogout }) {
               )}
             </div>
           )}
-        </div>
-        <div className="list-footer">
-          <Check size={12} /> 数据已同步
-          <IconButton
-            icon={RefreshCw}
-            label="同步笔记"
-            onClick={() => {
-              setRefreshKey((k) => k + 1);
-              refresh();
-            }}
-          />
         </div>
       </section>
       <div

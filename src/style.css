@@ -525,6 +525,16 @@ kbd {
 .tags-nav .nav-row {
   margin-bottom: 1px;
 }
+.folder-row.drop-before {
+  box-shadow: inset 0 2px 0 var(--primary);
+}
+.folder-row.drop-after {
+  box-shadow: inset 0 -2px 0 var(--primary);
+}
+.folder-row.drop-inside {
+  background: var(--primary-soft);
+  box-shadow: inset 0 0 0 1px var(--primary);
+}
 
 /* Height transition without measuring: animate the grid track from 0fr to 1fr. */
 .collapse {
@@ -945,31 +955,6 @@ kbd {
   font-size: 13px;
   background: var(--primary-soft);
 }
-.list-footer {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: 32px;
-  padding: 0 8px 0 18px;
-  flex: none;
-  border-top: 1px solid var(--line);
-  font-size: 11px;
-  color: var(--faint);
-}
-.list-footer > svg {
-  color: var(--success);
-}
-.list-footer .icon-button {
-  margin-left: auto;
-  height: 24px;
-  min-width: 24px;
-  padding: 4px;
-}
-.list-footer .icon-button svg {
-  width: 13px;
-  height: 13px;
-}
-
 /* ---------- Note panel ---------- */
 .note-panel {
   --detail-panel-width: 248px;
@@ -2352,9 +2337,6 @@ kbd {
   }
   .card-menu {
     display: flex;
-  }
-  .list-footer {
-    height: 36px;
   }
   .note-topbar {
     height: 50px;

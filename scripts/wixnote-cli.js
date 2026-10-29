@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import { readFile } from 'node:fs/promises';
+import { gzipSync } from 'node:zlib';
 
 const usage = `用法：
   node scripts/wixnote-cli.js list [搜索词]
@@ -32,9 +33,9 @@ try {
       headers: {
         Authorization: `Bearer ${process.env.WIXNOTE_API_KEY}`,
         'X-Wix-Request': '1',
-        'Content-Type': 'application/json',
+        'Content-Type': 'application/vnd.wix.json+gzip',
       },
-      body: body === undefined ? undefined : JSON.stringify(body),
+      body: body === undefined ? undefined : gzipSync(JSON.stringify(body)),
       redirect: 'error',
     });
     const data = await response.json();

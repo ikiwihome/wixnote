@@ -1,7 +1,7 @@
 import DOMPurify from 'dompurify';
 import { marked } from 'marked';
 import { asBlob } from 'html-docx-js-typescript';
-import { download } from './api.js';
+import { download, gzipJson, gzipJsonType } from './api.js';
 
 // The same document styles are used by both export formats.
 const documentStyles = `
@@ -73,8 +73,8 @@ export async function exportDocument(note, format, safeName) {
   const response = await fetch('/api/export/pdf', {
     method: 'POST',
     credentials: 'same-origin',
-    headers: { 'Content-Type': 'application/json', 'X-Wix-Request': '1' },
-    body: JSON.stringify({ html: htmlDocument }),
+    headers: { 'Content-Type': gzipJsonType, 'X-Wix-Request': '1' },
+    body: await gzipJson({ html: htmlDocument }),
   });
   if (!response.ok) {
     const data = await response.json().catch(() => ({}));

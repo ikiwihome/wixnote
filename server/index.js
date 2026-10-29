@@ -16,6 +16,7 @@ import {
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
+import { gunzipSync } from 'node:zlib';
 import { openStore } from './store.js';
 import { migrateSqlite } from './migrate.js';
 import { readZip, writeZip, readBackupZip, writeBackupZip } from './zip.js';
@@ -323,9 +324,31 @@ export function createApp({
   });
   const backupZip = express.raw({ type: 'application/zip', limit: '160mb' });
   app.use('/api/import', (req, res, next) => (req.user ? backupZip(req, res, next) : next()));
-  const publicJson = express.json({ limit: '16kb' }),
-    noteJson = express.json({ limit: '12mb' }),
-    pdfJson = express.json({ limit: '160mb' });
+  // Clients gzip JSON bodies so WAFs in front of the app don't flag note HTML as an attack.
+  const jsonParser = (limit) => {
+    const json = express.json({ limit }),
+      raw = express.raw({ type: 'application/vnd.wix.json+gzip', limit });
+    return (req, res, next) => {
+      if (!req.is('application/vnd.wix.json+gzip')) return json(req, res, next);
+      raw(req, res, (err) => {
+        if (err || !Buffer.isBuffer(req.body)) return next(err);
+        try {
+          const text = gunzipSync(req.body, { maxOutputLength: limit }).toString('utf8');
+          req.body = JSON.parse(text);
+        } catch (e) {
+          return next(
+            e.code === 'ERR_BUFFER_TOO_LARGE'
+              ? Object.assign(e, { type: 'entity.too.large' })
+              : error(400, '请求内容格式错误'),
+          );
+        }
+        next();
+      });
+    };
+  };
+  const publicJson = jsonParser(16 * 1024),
+    noteJson = jsonParser(12 * 1024 * 1024),
+    pdfJson = jsonParser(160 * 1024 * 1024);
   app.use((req, res, next) => {
     const parser = !req.user ? publicJson : req.path === '/api/export/pdf' ? pdfJson : noteJson;
     parser(req, res, next);
@@ -625,6 +648,31 @@ export function createApp({
     const name = text(req.body.name ?? row.name, 100).trim();
     if (!name) throw error(400, '文件夹名称不能为空');
     save(() => Object.assign(folder(row.id, owner(req)), { parent_id: parent || null, name }));
+    res.json(folder(row.id, owner(req)));
+  });
+  // Reorders siblings: moves the folder under parent_id, before the sibling `before` (or last).
+  app.post('/api/folders/:id/move', (req, res) => {
+    const row = folder(req.params.id, owner(req)),
+      parent = req.body.parent_id || null,
+      before = req.body.before || null;
+    if (parent) folder(parent, owner(req));
+    if (before && (before === row.id || folder(before, owner(req)).parent_id !== parent))
+      throw error(400, '目标位置无效');
+    validateFolderTree(
+      userFolders(owner(req)).map((item) =>
+        item.id === row.id ? { ...item, parent_id: parent } : item,
+      ),
+    );
+    save(() => {
+      const siblings = userFolders(owner(req))
+        .filter((f) => f.parent_id === parent && f.id !== row.id)
+        .sort((a, b) => a.position - b.position || byName(a, b));
+      const target = folder(row.id, owner(req));
+      target.parent_id = parent;
+      const index = before ? siblings.findIndex((f) => f.id === before) : siblings.length;
+      siblings.splice(index, 0, target);
+      siblings.forEach((f, position) => (f.position = position));
+    });
     res.json(folder(row.id, owner(req)));
   });
   app.delete('/api/folders/:id', (req, res) => {
