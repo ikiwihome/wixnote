@@ -1,15 +1,24 @@
 export async function api(url, options = {}) {
   const body = options.body;
+  const { responseType, ...fetchOptions } = options;
   const response = await fetch('/api' + url, {
-    ...options,
+    ...fetchOptions,
     credentials: 'same-origin',
     headers: {
       'X-Wix-Request': '1',
-      ...(body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
+      ...(body instanceof FormData
+        ? {}
+        : { 'Content-Type': body instanceof Blob ? 'application/zip' : 'application/json' }),
       ...options.headers,
     },
-    body: body == null ? undefined : body instanceof FormData ? body : JSON.stringify(body),
+    body:
+      body == null
+        ? undefined
+        : body instanceof FormData || body instanceof Blob
+          ? body
+          : JSON.stringify(body),
   });
+  if (response.ok && responseType === 'blob') return response.blob();
   const data = await response.json().catch(() => null);
   if (!response.ok)
     throw Object.assign(

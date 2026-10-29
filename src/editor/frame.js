@@ -312,6 +312,10 @@ import * as WizEditor from 'wiz-editor/client';
     },
     true,
   );
+  // Double-clicking a note in reading mode asks the host to switch to editing.
+  document.addEventListener('dblclick', () => {
+    if (loaded && note?.readOnly) send({ action: 'request-edit' });
+  });
   addEventListener('pagehide', () => {
     clearTimeout(timer);
     editor?.destroy();

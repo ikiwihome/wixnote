@@ -48,6 +48,20 @@ export function IconButton({ icon: Icon, label, onClick, active, disabled, class
     </button>
   );
 }
+export function Switch({ checked, label, onChange, disabled }) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      className="switch"
+      aria-checked={checked}
+      aria-label={label}
+      title={label}
+      disabled={disabled}
+      onClick={() => onChange(!checked)}
+    />
+  );
+}
 export function Modal({ title, children, onClose, wide = false }) {
   const panel = useRef(),
     previousFocus = useRef(document.activeElement),
@@ -245,7 +259,7 @@ export function Settings({ bootstrap, onClose, onChanged, onLogout, onError }) {
     [busy, setBusy] = useState(false),
     [notice, setNotice] = useState(''),
     [keys, setKeys] = useState([]),
-    [keyName, setKeyName] = useState('CLI'),
+    [keyName, setKeyName] = useState(null),
     [newKey, setNewKey] = useState('');
   const input = useRef();
   const settings = bootstrap.settings;
@@ -276,6 +290,7 @@ export function Settings({ bootstrap, onClose, onChanged, onLogout, onError }) {
                 setTab(key);
                 setNotice('');
                 setNewKey('');
+                setKeyName(null);
                 if (key === 'api') api('/api-keys').then(setKeys).catch(onError);
               }}
             >
@@ -289,6 +304,33 @@ export function Settings({ bootstrap, onClose, onChanged, onLogout, onError }) {
             <>
               <h3>账户信息</h3>
               <p className="muted">{bootstrap.user.email}</p>
+              {bootstrap.isAdmin && (
+                <div className="data-action registration-toggle">
+                  <div>
+                    <strong>允许新用户注册</strong>
+                    <p>关闭后登录页不再提供注册入口，已有账户不受影响</p>
+                  </div>
+                  <Switch
+                    label="允许新用户注册"
+                    checked={bootstrap.allowRegistration === true}
+                    disabled={busy}
+                    onChange={async (allowRegistration) => {
+                      setBusy(true);
+                      try {
+                        await api('/registration', {
+                          method: 'PUT',
+                          body: { allowRegistration },
+                        });
+                        await onChanged();
+                      } catch (e) {
+                        onError(e);
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                  />
+                </div>
+              )}
               <form
                 onSubmit={async (e) => {
                   e.preventDefault();
@@ -400,7 +442,7 @@ export function Settings({ bootstrap, onClose, onChanged, onLogout, onError }) {
               <div className="data-action">
                 <div>
                   <strong>导出完整备份</strong>
-                  <p>JSON 格式，包含至多 100 MB 附件</p>
+                  <p>ZIP 格式，包含至多 100 MB 附件</p>
                 </div>
                 <button
                   className="secondary"
@@ -408,11 +450,11 @@ export function Settings({ bootstrap, onClose, onChanged, onLogout, onError }) {
                   onClick={async () => {
                     setBusy(true);
                     try {
-                      const data = await api('/backup');
+                      const data = await api('/backup', { responseType: 'blob' });
                       download(
-                        `wixnote-backup-${new Date().toISOString().slice(0, 10)}.json`,
-                        JSON.stringify(data),
-                        'application/json',
+                        `wixnote-backup-${new Date().toISOString().slice(0, 10)}.zip`,
+                        data,
+                        'application/zip',
                       );
                       setNotice('备份已导出');
                     } catch (e) {
@@ -428,7 +470,7 @@ export function Settings({ bootstrap, onClose, onChanged, onLogout, onError }) {
               <div className="data-action">
                 <div>
                   <strong>导入备份</strong>
-                  <p>从本站导出的 JSON 文件恢复</p>
+                  <p>从本站导出的 ZIP 文件恢复</p>
                 </div>
                 <button className="secondary" disabled={busy} onClick={() => input.current.click()}>
                   <Upload size={16} /> 导入
@@ -438,7 +480,7 @@ export function Settings({ bootstrap, onClose, onChanged, onLogout, onError }) {
                 ref={input}
                 hidden
                 type="file"
-                accept=".json"
+                accept=".zip,application/zip"
                 onChange={async (e) => {
                   const f = e.target.files[0];
                   if (!f) return;
@@ -446,7 +488,7 @@ export function Settings({ bootstrap, onClose, onChanged, onLogout, onError }) {
                   try {
                     const result = await api('/import', {
                       method: 'POST',
-                      body: JSON.parse(await f.text()),
+                      body: f,
                     });
                     await onChanged();
                     setNotice(`已导入 ${result.imported} 篇笔记`);
@@ -465,37 +507,57 @@ export function Settings({ bootstrap, onClose, onChanged, onLogout, onError }) {
             <>
               <h3>API Key</h3>
               <p className="muted">密钥可通过 CLI 读取和修改当前账户的笔记，请妥善保管。</p>
-              <form
-                onSubmit={async (e) => {
-                  e.preventDefault();
-                  setBusy(true);
-                  try {
-                    const result = await api('/api-keys', {
-                      method: 'POST',
-                      body: { name: keyName },
-                    });
-                    setNewKey(result.token);
-                    setKeys(await api('/api-keys'));
-                  } catch (error) {
-                    onError(error);
-                  } finally {
-                    setBusy(false);
-                  }
-                }}
-              >
-                <label className="field">
-                  密钥名称
-                  <input
-                    value={keyName}
-                    onChange={(e) => setKeyName(e.target.value)}
-                    required
-                    maxLength={100}
-                  />
-                </label>
-                <button className="primary" disabled={busy}>
+              {keyName === null ? (
+                <button
+                  className="primary"
+                  disabled={busy}
+                  onClick={() => {
+                    setNewKey('');
+                    setKeyName('default');
+                  }}
+                >
                   创建密钥
                 </button>
-              </form>
+              ) : (
+                <form
+                  className="key-name-form"
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    setBusy(true);
+                    try {
+                      const result = await api('/api-keys', {
+                        method: 'POST',
+                        body: { name: keyName.trim() },
+                      });
+                      setNewKey(result.token);
+                      setKeyName(null);
+                      setKeys(await api('/api-keys'));
+                    } catch (error) {
+                      onError(error);
+                    } finally {
+                      setBusy(false);
+                    }
+                  }}
+                >
+                  <label className="field">
+                    密钥名称
+                    <input
+                      autoFocus
+                      required
+                      maxLength={100}
+                      value={keyName}
+                      onChange={(e) => setKeyName(e.target.value)}
+                      onFocus={(e) => e.target.select()}
+                    />
+                  </label>
+                  <button type="button" className="secondary" onClick={() => setKeyName(null)}>
+                    取消
+                  </button>
+                  <button className="primary" disabled={busy || !keyName.trim()}>
+                    创建
+                  </button>
+                </form>
+              )}
               {newKey && (
                 <div className="field">
                   <p>密钥仅显示一次，请立即复制保存。</p>

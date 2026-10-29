@@ -23,7 +23,7 @@
 
 WixNote (灵眸笔记) is a clean, private note-taking app: rich-text and outline editing, full-text search, version history and multi-format export, while your notes always stay on your own server.
 
-It is built with React + Express + SQLite and ships as a **single container image**. No external database, Redis or search cluster is required; one `docker compose` command gets it running.
+It is built with React + Express. Notes are stored as HTML files indexed by a single JSON file, and everything ships as a **single container image**. No database, Redis or search cluster is required; one `docker compose` command gets it running.
 
 > The user interface is currently in Simplified Chinese.
 
@@ -65,7 +65,7 @@ It is built with React + Express + SQLite and ships as a **single container imag
 
 - Read-only share links that can be revoked, and private comments on notes.
 - Export to Word, PDF, HTML, Markdown and plain text.
-- Full JSON backup with append-only restore.
+- Full ZIP backup with append-only restore.
 
 **Experience and security**
 
@@ -109,7 +109,7 @@ Inside the container the service always listens on `3000`, and the data director
 ### First sign-in
 
 1. Open the home page and register the first account with an email, a display name and a password of at least 10 characters.
-2. After the first account is created, `ALLOW_REGISTRATION=false` takes effect; other users can register only after an administrator turns it on.
+2. The first account is the administrator. Registration is disabled by default and can be enabled under Settings → Account.
 3. Folders, tags, notes and attachments are isolated between accounts.
 
 ## Configuration
@@ -120,9 +120,8 @@ Copy `.env.example` to `.env`, adjust it, then run `docker compose up -d --build
 | -------------------- | --------------------------- | ---------------------------------------------------------------------- |
 | `PORT`               | `8080`                      | Host port mapped by Compose (always `3000` inside the container)       |
 | `HOST`               | `0.0.0.0`                   | Address the service listens on                                         |
-| `DATA_DIR`           | `./data` (`/data` in image) | Directory for the SQLite database and attachments                      |
+| `DATA_DIR`           | `./data` (`/data` in image) | Directory for note files, the index and attachments                    |
 | `MAX_UPLOAD_MB`      | `100`                       | Size limit for one attachment and for extracted ZIP assets, 1–1024     |
-| `ALLOW_REGISTRATION` | `false`                     | Whether more accounts can register after the first one                 |
 | `SECURE_COOKIE`      | `false`                     | Set to `true` when served over HTTPS so the session cookie is `Secure` |
 | `CHROMIUM_PATH`      | auto-detected               | Path to Chromium or Chrome used for PDF export                         |
 | `WIX_RESET_PASSWORD` | empty                       | Only used by the password reset script in non-interactive mode         |
@@ -143,7 +142,7 @@ pnpm run dev
 
 - Frontend dev server: <http://localhost:5173> (Vite, proxies `/api` and `/files` to 3000)
 - API / backend: <http://localhost:3000>
-- The local database is written to `data/` by default
+- Local data is written to `data/` by default
 
 If port 3000 is already taken by a production preview, stop that process first.
 
@@ -173,20 +172,22 @@ curl http://localhost:3000/api/health  # Returns {"ok":true,...}
 
 ```text
 data/
-├── wixnote.sqlite        # Accounts, sessions, folders, tags, notes, history, comments, attachment metadata
-├── wixnote.sqlite-wal    # WAL file (present while running)
-├── wixnote.sqlite-shm    # Shared-memory file (present while running)
+├── index.json            # Index: accounts, sessions, folders, tags, note metadata, history, comments, attachment metadata, registration switch
+├── notes/                # Note bodies as <note ID>.html; native editor blocks in <note ID>.editor.json
+├── revisions/            # History bodies, same layout as notes/
 ├── attachments/          # Attachment binaries, named by attachment ID
 └── .uploads/             # Temporary upload directory
 ```
 
-Accounts and sessions are stored in the database too, so restoring the database also restores sign-in state.
+Accounts and sessions live in `index.json` too, so restoring the data directory also restores sign-in state. Note bodies are plain HTML files you can open in a browser (Markdown-type notes keep their Markdown source so no formatting is lost when editing); the server re-reads a file after it changes.
 
-### In-app JSON backup
+On first start the app creates `index.json` and the folders it needs. When upgrading from 1.x, a data directory that only contains `wixnote.sqlite` is migrated to this layout automatically on first start; the SQLite file is left untouched and can be deleted once you have checked the result.
 
-Export JSON from "设置 → 数据管理" (Settings → Data). It contains folders, native editor blocks, tags, comments, history and attachments (embedded as base64). Import works in **append** mode: IDs are remapped and inserted without overwriting existing content.
+### In-app ZIP backup
 
-Limits: attachments in one backup may total at most 100 MB, and the serialized JSON at most 150 MB. Beyond that, back up the data directory instead.
+Export ZIP from "设置 → 数据管理" (Settings → Data). Inside, `backup.json` is the index (folders, tags, note metadata, comments, history, attachment info), `notes/` and `revisions/` hold HTML bodies, and `attachments/` holds the files. Import only accepts ZIP backups exported by WixNote. Import works in **append** mode: IDs are remapped and inserted without overwriting existing content.
+
+Limits: attachments in one backup may total at most 100 MB, and the uploaded ZIP at most 160 MB. Beyond that, back up the data directory instead.
 
 ### Data directory backup (recommended for large data)
 
@@ -196,7 +197,7 @@ docker compose cp wixnote:/data ./wixnote-data-backup
 docker compose start
 ```
 
-To restore, stop the service first, put the backup back into the volume or mounted directory, and make sure UID/GID `1000:1000` can write to it. The SQLite files and `attachments/` must be restored together from the same backup.
+To restore, stop the service first, put the backup back into the volume or mounted directory, and make sure UID/GID `1000:1000` can write to it. `index.json`, `notes/`, `revisions/` and `attachments/` must be restored together from the same backup.
 
 ### Resetting a password
 
@@ -215,7 +216,7 @@ DATA_DIR=./data node scripts/reset-password.js you@example.com
 WIX_RESET_PASSWORD='new-password-123' node scripts/reset-password.js you@example.com
 ```
 
-The command only reads and writes the local database; it never sends email or contacts any official server.
+The command only reads and writes the local `index.json`, and a running server picks up the new password automatically; it never sends email or contacts any official server.
 
 ## Deploying to the internet
 
@@ -241,7 +242,7 @@ server {
 
 Always set `SECURE_COOKIE=true` once HTTPS is enabled. Share links are generated from the address used in the browser; images are served inline and other attachments are forced to download.
 
-`client_max_body_size` must cover JSON backup imports (up to 150 MB) and attachment uploads.
+`client_max_body_size` must cover ZIP backup imports and attachment uploads.
 
 ## Project structure
 
@@ -256,7 +257,8 @@ Always set `SECURE_COOKIE=true` once HTTPS is enabled. Share links are generated
 │   └── style.css
 ├── server/
 │   ├── index.js             # Express app, all REST routes, security middleware
-│   ├── db.js                # node:sqlite setup and schema migrations
+│   ├── store.js             # index.json and HTML body storage with transactions
+│   ├── migrate.js           # One-time migration from a 1.x SQLite data directory
 │   ├── document.js          # Native editor block validation and asset path rewriting
 │   └── zip.js               # ZIP reading and writing
 ├── public/

@@ -23,6 +23,7 @@ export default function NoteEditor({
   onDirty,
   onUpload,
   readOnly,
+  onRequestEdit,
   editorRef,
   fontSize = 16,
   theme = 'light',
@@ -31,7 +32,16 @@ export default function NoteEditor({
   const frame = useRef(),
     callbacks = useRef(),
     initialNote = useRef(note);
-  callbacks.current = { onChange, onDirty, onUpload, onError, readOnly, theme, fontSize };
+  callbacks.current = {
+    onChange,
+    onDirty,
+    onUpload,
+    onError,
+    onRequestEdit,
+    readOnly,
+    theme,
+    fontSize,
+  };
   const [channel] = useState(() => crypto.randomUUID());
   const [state, setState] = useState('loading');
   const [pendingLink, setPendingLink] = useState(null);
@@ -174,6 +184,10 @@ export default function NoteEditor({
           item.reject(error);
         }
         callbacks.current.onError(error);
+        return;
+      }
+      if (message.action === 'request-edit') {
+        if (callbacks.current.readOnly) callbacks.current.onRequestEdit?.();
         return;
       }
       if (message.action === 'shortcut' && ['s', 'k', 'n'].includes(message.key)) {

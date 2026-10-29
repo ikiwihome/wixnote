@@ -1604,6 +1604,9 @@ function Workspace({ onLogout }) {
                 aria-label="笔记标题"
                 value={draft.title}
                 readOnly={deleted || !editing}
+                onDoubleClick={() => {
+                  if (!deleted && !editing) setEditing(true);
+                }}
                 placeholder="无标题笔记"
                 maxLength={500}
                 onChange={(e) => edit({ title: e.target.value })}
@@ -1625,6 +1628,9 @@ function Workspace({ onLogout }) {
                   theme={boot.settings.theme || 'light'}
                   onUpload={upload}
                   readOnly={deleted || !editing}
+                  onRequestEdit={() => {
+                    if (!deleted) setEditing(true);
+                  }}
                   editorRef={editorRef}
                   fontSize={boot.settings.fontSize || 16}
                   onError={onError}

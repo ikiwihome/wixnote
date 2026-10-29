@@ -16,8 +16,9 @@ import {
 import path from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { promisify } from 'node:util';
-import { openDatabase, transaction } from './db.js';
-import { readZip, writeZip } from './zip.js';
+import { openStore } from './store.js';
+import { migrateSqlite } from './migrate.js';
+import { readZip, writeZip, readBackupZip, writeBackupZip } from './zip.js';
 import { marked } from 'marked';
 import { decodeHTML } from 'entities';
 import { editorData, storedEditorData, rewriteResources } from './document.js';
@@ -102,6 +103,10 @@ const inlineImage = (buffer) => {
     return 'image/webp';
   return null;
 };
+const compare = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
+const byName = (a, b) => compare(a.name, b.name);
+const byCreated = (a, b) => compare(a.created_at, b.created_at);
+const validColor = (value) => typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value);
 
 function validateFolderTree(rows) {
   const records = new Map(rows.map((row) => [row.id, row])),
@@ -133,61 +138,80 @@ function validateFolderTree(rows) {
 export function createApp({
   dataDir = process.env.DATA_DIR || path.join(project, 'data'),
   secureCookie = process.env.SECURE_COOKIE === 'true',
-  allowRegistration = process.env.ALLOW_REGISTRATION === 'true',
 } = {}) {
-  const db = openDatabase(dataDir);
+  const store = openStore(dataDir);
+  if (migrateSqlite(dataDir, store))
+    console.log('已将 wixnote.sqlite 迁移为 HTML 笔记文件与 index.json 索引');
   const fileDir = path.join(dataDir, 'attachments');
   mkdirSync(fileDir, { recursive: true });
   const app = express();
   app.disable('x-powered-by');
-  const get = (sql, ...args) => db.prepare(sql).get(...args);
-  const all = (sql, ...args) => db.prepare(sql).all(...args);
-  const run = (sql, ...args) => db.prepare(sql).run(...args);
+  // All writes go through save() so the index and note files change together or not at all.
+  const db = () => store.data;
+  const save = (action) => store.transaction(action);
   const owner = (req) => req.user.id;
+  const userById = (id) => db().users.find((u) => u.id === id);
+  const adminId = () => db().users[0]?.id;
+  const registrationAllowed = () => db().system.allowRegistration === true;
   const publicUser = (user) => ({ id: user.id, name: user.name, email: user.email });
   const folder = (id, user) => {
-    const row = get('SELECT * FROM folders WHERE id=? AND user_id=?', id, user);
+    const row = db().folders.find((f) => f.id === id && f.user_id === user);
     if (!row) throw error(404, '文件夹不存在');
     return row;
   };
   const note = (id, user) => {
-    const row = get('SELECT * FROM notes WHERE id=? AND user_id=?', id, user);
+    const row = db().notes.find((n) => n.id === id && n.user_id === user);
     if (!row) throw error(404, '笔记不存在');
     return row;
   };
-  const noteTags = (id) =>
-    all(
-      'SELECT t.* FROM tags t JOIN note_tags nt ON nt.tag_id=t.id WHERE nt.note_id=? ORDER BY t.name',
-      id,
+  const ownedAttachment = (id, user) =>
+    db().attachments.find(
+      (a) => a.id === id && db().notes.some((n) => n.id === a.note_id && n.user_id === user),
     );
-  const noteDetail = (row) => ({
-    ...row,
-    editor_data: editorData(row.editor_data),
-    favorite: !!row.favorite,
-    pinned: !!row.pinned,
-    tags: noteTags(row.id),
-    attachments: all('SELECT * FROM attachments WHERE note_id=? ORDER BY created_at', row.id),
-  });
-  function setTags(id, tags, user) {
+  const texts = new WeakMap();
+  const plainText = (row) => {
+    const body = store.body('notes', row.id);
+    if (!texts.has(body))
+      texts.set(body, row.type === 'markdown' ? body.content : extractText(body.content));
+    return texts.get(body);
+  };
+  const noteTags = (row) =>
+    db()
+      .tags.filter((t) => row.tags.includes(t.id))
+      .sort(byName);
+  const noteDetail = (row) => {
+    const body = store.body('notes', row.id);
+    return {
+      ...row,
+      content: body.content,
+      text: plainText(row),
+      editor_data: editorData(body.editor_data),
+      tags: noteTags(row),
+      attachments: db()
+        .attachments.filter((a) => a.note_id === row.id)
+        .sort(byCreated),
+    };
+  };
+  function setTags(row, tags, user) {
     if (!Array.isArray(tags) || tags.length > 200) throw error(400, '标签格式不正确');
     for (const id of tags)
-      if (typeof id !== 'string' || !get('SELECT id FROM tags WHERE id=? AND user_id=?', id, user))
+      if (typeof id !== 'string' || !db().tags.some((t) => t.id === id && t.user_id === user))
         throw error(400, '标签不存在');
-    run('DELETE FROM note_tags WHERE note_id=?', id);
-    for (const tag of new Set(tags)) run('INSERT INTO note_tags VALUES (?,?)', id, tag);
+    row.tags = [...new Set(tags)];
   }
+  // Must run before the note's body is replaced, so it captures the previous content.
   function revision(row) {
-    run(
-      'INSERT INTO revisions(id,note_id,title,content,type,created_at,version,editor_data) VALUES(?,?,?,?,?,?,?,?)',
-      uuid(),
-      row.id,
-      row.title,
-      row.content,
-      row.type,
-      now(),
-      row.version,
-      row.editor_data,
-    );
+    const id = uuid(),
+      body = store.body('notes', row.id);
+    db().revisions.push({
+      id,
+      note_id: row.id,
+      title: row.title,
+      type: row.type,
+      created_at: now(),
+      version: row.version,
+    });
+    store.setBody('revisions', id, body.content, body.editor_data);
   }
   function insertNote(user, data) {
     const id = uuid(),
@@ -196,32 +220,42 @@ export function createApp({
     if (!allowedTypes.has(type)) throw error(400, '不支持的笔记类型');
     if (data.folder_id) folder(data.folder_id, user);
     const content = cleanContent(data.content || '', type);
-    run(
-      'INSERT INTO notes(id,user_id,folder_id,title,content,text,type,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?)',
+    const row = {
       id,
-      user,
-      data.folder_id || null,
-      text(data.title || '无标题笔记', 500),
-      content,
-      type === 'markdown' ? content : extractText(content),
+      user_id: user,
+      folder_id: data.folder_id || null,
+      title: text(data.title || '无标题笔记', 500),
       type,
-      date,
-      date,
+      favorite: false,
+      pinned: false,
+      deleted_at: null,
+      created_at: date,
+      updated_at: date,
+      version: 1,
+      share_token: null,
+      tags: [],
+    };
+    db().notes.push(row);
+    store.setBody(
+      'notes',
+      id,
+      content,
+      data.editor_data != null ? storedEditorData(data.editor_data) : null,
     );
-    if (data.editor_data != null)
-      run('UPDATE notes SET editor_data=? WHERE id=?', storedEditorData(data.editor_data), id);
-    if (data.tags) setTags(id, data.tags, user);
-    return note(id, user);
+    if (data.tags) setTags(row, data.tags, user);
+    return row;
   }
   function session(req, res, user) {
     const token = randomBytes(32).toString('hex');
-    run('DELETE FROM sessions WHERE expires_at < ?', Date.now());
-    run(
-      'INSERT INTO sessions VALUES(?,?,?)',
-      hashToken(token),
-      user.id,
-      Date.now() + 30 * 86400000,
-    );
+    save(() => {
+      const data = db();
+      data.sessions = data.sessions.filter((s) => s.expires_at >= Date.now());
+      data.sessions.push({
+        token: hashToken(token),
+        user_id: user.id,
+        expires_at: Date.now() + 30 * 86400000,
+      });
+    });
     res.cookie('wix_session', token, {
       httpOnly: true,
       sameSite: 'strict',
@@ -257,10 +291,11 @@ export function createApp({
     next();
   });
   app.get('/api/health', (_req, res) => {
-    get('SELECT 1');
+    store.sync();
     res.json({ ok: true, version: '0.1.0' });
   });
   app.use((req, _res, next) => {
+    store.sync();
     const authorization = req.get('Authorization');
     if (authorization) {
       const match = /^Bearer (wn_[a-f0-9]{64})$/.exec(authorization);
@@ -268,10 +303,8 @@ export function createApp({
         (req.path === '/api/notes' && ['GET', 'POST'].includes(req.method)) ||
         (/^\/api\/notes\/[^/]+$/.test(req.path) && ['GET', 'PATCH'].includes(req.method));
       if (!match || !allowed) return next(error(401, 'API Key 无效或无权访问此接口'));
-      req.user = get(
-        'SELECT u.* FROM users u JOIN api_keys k ON k.user_id=u.id WHERE k.token_hash=?',
-        hashToken(match[1]),
-      );
+      const hash = hashToken(match[1]);
+      req.user = userById(db().apiKeys.find((k) => k.token_hash === hash)?.user_id);
       if (!req.user) return next(error(401, 'API Key 无效或已撤销'));
       return next();
     }
@@ -280,23 +313,21 @@ export function createApp({
       .map((s) => s.trim())
       .find((s) => s.startsWith('wix_session='))
       ?.slice(12);
-    if (token && /^[a-f0-9]{64}$/.test(token))
-      req.user = get(
-        'SELECT u.* FROM users u JOIN sessions s ON s.user_id=u.id WHERE s.token=? AND s.expires_at>?',
-        hashToken(token),
-        Date.now(),
+    if (token && /^[a-f0-9]{64}$/.test(token)) {
+      const hash = hashToken(token);
+      req.user = userById(
+        db().sessions.find((s) => s.token === hash && s.expires_at > Date.now())?.user_id,
       );
+    }
     next();
   });
+  const backupZip = express.raw({ type: 'application/zip', limit: '160mb' });
+  app.use('/api/import', (req, res, next) => (req.user ? backupZip(req, res, next) : next()));
   const publicJson = express.json({ limit: '16kb' }),
     noteJson = express.json({ limit: '12mb' }),
-    backupJson = express.json({ limit: '160mb' });
+    pdfJson = express.json({ limit: '160mb' });
   app.use((req, res, next) => {
-    const parser = !req.user
-      ? publicJson
-      : ['/api/import', '/api/export/pdf'].includes(req.path)
-        ? backupJson
-        : noteJson;
+    const parser = !req.user ? publicJson : req.path === '/api/export/pdf' ? pdfJson : noteJson;
     parser(req, res, next);
   });
   function authAttempt(req, kind) {
@@ -316,8 +347,8 @@ export function createApp({
   app.get('/api/auth', (req, res) =>
     res.json({
       user: req.user ? publicUser(req.user) : null,
-      needsSetup: !get('SELECT id FROM users LIMIT 1'),
-      allowRegistration,
+      needsSetup: !db().users.length,
+      allowRegistration: registrationAllowed(),
     }),
   );
   app.post('/api/auth/register', async (req, res) => {
@@ -327,19 +358,19 @@ export function createApp({
       password = text(req.body.password, 200);
     if (!name || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || password.length < 10)
       throw error(400, '请输入有效邮箱、姓名和至少 10 位密码');
-    if (!allowRegistration && get('SELECT id FROM users LIMIT 1'))
-      throw error(403, '注册已关闭，请联系部署管理员');
+    if (!registrationAllowed() && db().users.length) throw error(403, '注册已关闭，请联系管理员');
     const encodedPassword = await passwordHash(password);
-    const user = transaction(db, () => {
-      if (!allowRegistration && get('SELECT id FROM users LIMIT 1'))
-        throw error(403, '注册已关闭，请联系部署管理员');
-      if (get('SELECT id FROM users WHERE email=?', email)) throw error(409, '邮箱已注册');
-      const id = uuid();
-      run('INSERT INTO users VALUES(?,?,?,?,?)', id, email, name, encodedPassword, now());
+    const user = save(() => {
+      const data = db();
+      if (!registrationAllowed() && data.users.length) throw error(403, '注册已关闭，请联系管理员');
+      if (data.users.some((u) => u.email.toLowerCase() === email)) throw error(409, '邮箱已注册');
+      const id = uuid(),
+        user = { id, email, name, password: encodedPassword, created_at: now() };
+      data.users.push(user);
       const ids = [];
       for (const [position, label] of ['我的笔记', '我的日记', '我的工作', '我的学习'].entries()) {
         const fid = uuid();
-        run('INSERT INTO folders VALUES(?,?,?,?,?)', fid, id, null, label, position);
+        data.folders.push({ id: fid, user_id: id, parent_id: null, name: label, position });
         ids.push(fid);
       }
       insertNote(id, {
@@ -348,24 +379,21 @@ export function createApp({
         content:
           '<h1>让知识，有迹可循</h1><p>欢迎来到你的私人笔记空间。记录想法、整理知识，把重要的内容留在自己手中。</p><h2>从一篇笔记开始</h2><p>点击左侧「新建笔记」，或使用 <strong>Ctrl / ⌘ + N</strong>，开始记录。</p><ul><li>用文件夹与标签整理内容</li><li>用富文本或大纲记录想法</li><li>收藏重要笔记，全文搜索快速找到内容</li><li>点击保存图标保存修改，历史版本和回收站守护你的记录</li></ul><blockquote><p>好记性，不如一篇好笔记。</p></blockquote><h2>数据属于你</h2><p>在设置中导出完整备份。所有笔记与附件都保存在你的服务器上。</p>',
       });
-      return get('SELECT * FROM users WHERE id=?', id);
+      return user;
     });
     session(req, res, user);
   });
   app.post('/api/auth/login', async (req, res) => {
     const key = authAttempt(req, 'login');
-    const email = text(req.body.email, 254).trim(),
+    const email = text(req.body.email, 254).trim().toLowerCase(),
       password = text(req.body.password, 200),
-      user = get('SELECT * FROM users WHERE email=?', email);
+      user = db().users.find((u) => u.email.toLowerCase() === email);
     const valid = await passwordMatches(
       password,
       user?.password || '0'.repeat(32) + ':' + '0'.repeat(128),
     );
-    if (
-      !user ||
-      !valid ||
-      get('SELECT password FROM users WHERE id=?', user.id)?.password !== user.password
-    )
+    store.sync();
+    if (!user || !valid || userById(user.id)?.password !== user.password)
       throw error(401, '邮箱或密码错误');
     attempts.delete(key);
     session(req, res, user);
@@ -376,7 +404,10 @@ export function createApp({
       .map((s) => s.trim())
       .find((s) => s.startsWith('wix_session='))
       ?.slice(12);
-    if (token) run('DELETE FROM sessions WHERE token=?', hashToken(token));
+    if (token)
+      save(() => {
+        db().sessions = db().sessions.filter((s) => s.token !== hashToken(token));
+      });
     res.clearCookie('wix_session', {
       path: '/',
       httpOnly: true,
@@ -405,29 +436,23 @@ export function createApp({
     res.sendFile(file);
   }
   app.get('/api/public/:token', (req, res) => {
-    const row = get(
-      'SELECT * FROM notes WHERE share_token=? AND deleted_at IS NULL',
-      req.params.token,
-    );
+    const row = db().notes.find((n) => n.share_token === req.params.token && !n.deleted_at);
     if (!row) throw error(404, '分享已取消或笔记不存在');
-    const content = row.content.replace(
-      /\/files\/([a-f0-9-]{36})/g,
-      `/api/public/${req.params.token}/files/$1`,
-    );
+    const content = store
+      .body('notes', row.id)
+      .content.replace(/\/files\/([a-f0-9-]{36})/g, `/api/public/${req.params.token}/files/$1`);
     res.json({
       title: row.title,
       content,
       type: row.type,
       updated_at: row.updated_at,
-      author: get('SELECT name FROM users WHERE id=?', row.user_id).name,
+      author: userById(row.user_id).name,
     });
   });
   app.get('/api/public/:token/files/:id', (req, res) => {
-    const attachment = get(
-      'SELECT a.* FROM attachments a JOIN notes n ON n.id=a.note_id WHERE a.id=? AND n.share_token=? AND n.deleted_at IS NULL',
-      req.params.id,
-      req.params.token,
-    );
+    const shared = db().notes.find((n) => n.share_token === req.params.token && !n.deleted_at);
+    const attachment =
+      shared && db().attachments.find((a) => a.id === req.params.id && a.note_id === shared.id);
     if (!attachment) throw error(404, '附件不存在');
     sendFile(res, attachment);
   });
@@ -463,21 +488,22 @@ export function createApp({
     }
   });
   app.get('/api/bootstrap', (req, res) => {
+    const user = owner(req),
+      notes = db().notes.filter((n) => n.user_id === user),
+      live = notes.filter((n) => !n.deleted_at);
     res.json({
       user: publicUser(req.user),
-      folders: all('SELECT * FROM folders WHERE user_id=? ORDER BY position,name', owner(req)),
-      tags: all('SELECT * FROM tags WHERE user_id=? ORDER BY name', owner(req)),
-      settings: JSON.parse(
-        get('SELECT value FROM settings WHERE user_id=?', owner(req))?.value || '{}',
-      ),
-      counts: get(
-        'SELECT COUNT(*) total,COALESCE(SUM(favorite),0) favorites FROM notes WHERE user_id=? AND deleted_at IS NULL',
-        owner(req),
-      ),
-      trash: get(
-        'SELECT COUNT(*) count FROM notes WHERE user_id=? AND deleted_at IS NOT NULL',
-        owner(req),
-      ).count,
+      isAdmin: user === adminId(),
+      allowRegistration: registrationAllowed(),
+      folders: db()
+        .folders.filter((f) => f.user_id === user)
+        .sort((a, b) => a.position - b.position || byName(a, b)),
+      tags: db()
+        .tags.filter((t) => t.user_id === user)
+        .sort(byName),
+      settings: db().settings[user] || {},
+      counts: { total: live.length, favorites: live.filter((n) => n.favorite).length },
+      trash: notes.length - live.length,
     });
   });
   app.patch('/api/account', async (req, res) => {
@@ -493,45 +519,60 @@ export function createApp({
         throw error(403, '当前密码错误');
       encodedPassword = await passwordHash(password);
     }
-    transaction(db, () => {
+    const updated = save(() => {
+      const row = userById(user);
       if (encodedPassword) {
-        if (get('SELECT password FROM users WHERE id=?', user).password !== req.user.password)
+        if (row.password !== req.user.password)
           throw error(409, '密码已在其他窗口修改，请重新登录');
-        run('UPDATE users SET password=? WHERE id=?', encodedPassword, user);
-        run('DELETE FROM sessions WHERE user_id=?', user);
+        row.password = encodedPassword;
+        db().sessions = db().sessions.filter((s) => s.user_id !== user);
       }
-      run('UPDATE users SET name=? WHERE id=?', name, user);
+      row.name = name;
+      return row;
     });
-    session(req, res, get('SELECT * FROM users WHERE id=?', user));
+    session(req, res, updated);
   });
   app.get('/api/api-keys', (req, res) => {
     res.json(
-      all(
-        'SELECT id,name,created_at FROM api_keys WHERE user_id=? ORDER BY created_at DESC',
-        owner(req),
-      ),
+      db()
+        .apiKeys.filter((k) => k.user_id === owner(req))
+        .sort((a, b) => byCreated(b, a))
+        .map(({ id, name, created_at }) => ({ id, name, created_at })),
     );
   });
   app.post('/api/api-keys', (req, res) => {
-    const name = text(req.body.name || 'CLI', 100).trim();
+    const name = text(req.body.name || 'default', 100).trim();
     if (!name) throw error(400, '密钥名称不能为空');
     const id = uuid(),
       token = 'wn_' + randomBytes(32).toString('hex'),
       created_at = now();
-    run(
-      'INSERT INTO api_keys(id,user_id,token_hash,name,created_at) VALUES(?,?,?,?,?)',
-      id,
-      owner(req),
-      hashToken(token),
-      name,
-      created_at,
+    save(() =>
+      db().apiKeys.push({
+        id,
+        user_id: owner(req),
+        token_hash: hashToken(token),
+        name,
+        created_at,
+      }),
     );
     res.status(201).json({ id, name, created_at, token });
   });
   app.delete('/api/api-keys/:id', (req, res) => {
-    const result = run('DELETE FROM api_keys WHERE id=? AND user_id=?', req.params.id, owner(req));
-    if (!result.changes) throw error(404, '密钥不存在');
+    const key = db().apiKeys.find((k) => k.id === req.params.id && k.user_id === owner(req));
+    if (!key) throw error(404, '密钥不存在');
+    save(() => {
+      db().apiKeys = db().apiKeys.filter((k) => k.id !== key.id);
+    });
     res.json({ ok: true });
+  });
+  // Registration is a deployment-wide switch that only the first (administrator) account may flip.
+  app.put('/api/registration', (req, res) => {
+    if (owner(req) !== adminId()) throw error(403, '只有管理员可以修改注册设置');
+    if (typeof req.body.allowRegistration !== 'boolean') throw error(400, '设置值无效');
+    save(() => {
+      db().system.allowRegistration = req.body.allowRegistration;
+    });
+    res.json({ allowRegistration: registrationAllowed() });
   });
   app.put('/api/settings', (req, res) => {
     const changes = req.body;
@@ -543,37 +584,31 @@ export function createApp({
       if (key === 'listView' && ['detail', 'compact'].includes(value)) continue;
       throw error(400, '设置值无效');
     }
-    const existing = JSON.parse(
-      get('SELECT value FROM settings WHERE user_id=?', owner(req))?.value || '{}',
-    );
+    const existing = db().settings[owner(req)];
     const result = {
-        ...(existing && typeof existing === 'object' && !Array.isArray(existing) ? existing : {}),
-        ...changes,
-      },
-      value = JSON.stringify(result);
-    run(
-      'INSERT INTO settings VALUES(?,?) ON CONFLICT(user_id) DO UPDATE SET value=excluded.value',
-      owner(req),
-      value,
-    );
+      ...(existing && typeof existing === 'object' && !Array.isArray(existing) ? existing : {}),
+      ...changes,
+    };
+    save(() => {
+      db().settings[owner(req)] = result;
+    });
     res.json(result);
   });
+  const userFolders = (user) => db().folders.filter((f) => f.user_id === user);
   app.post('/api/folders', (req, res) => {
     const id = uuid(),
       name = text(req.body.name, 100).trim();
     if (!name) throw error(400, '文件夹名称不能为空');
     if (req.body.parent_id) folder(req.body.parent_id, owner(req));
-    validateFolderTree([
-      ...all('SELECT id,parent_id FROM folders WHERE user_id=?', owner(req)),
-      { id, parent_id: req.body.parent_id || null },
-    ]);
-    run(
-      'INSERT INTO folders VALUES(?,?,?,?,?)',
-      id,
-      owner(req),
-      req.body.parent_id || null,
-      name,
-      Date.now(),
+    validateFolderTree([...userFolders(owner(req)), { id, parent_id: req.body.parent_id || null }]);
+    save(() =>
+      db().folders.push({
+        id,
+        user_id: owner(req),
+        parent_id: req.body.parent_id || null,
+        name,
+        position: Date.now(),
+      }),
     );
     res.status(201).json(folder(id, owner(req)));
   });
@@ -583,118 +618,134 @@ export function createApp({
     if (parent) folder(parent, owner(req));
     if (Object.hasOwn(req.body, 'parent_id'))
       validateFolderTree(
-        all('SELECT id,parent_id FROM folders WHERE user_id=?', owner(req)).map((item) =>
+        userFolders(owner(req)).map((item) =>
           item.id === row.id ? { ...item, parent_id: parent || null } : item,
         ),
       );
     const name = text(req.body.name ?? row.name, 100).trim();
     if (!name) throw error(400, '文件夹名称不能为空');
-    run('UPDATE folders SET parent_id=?,name=? WHERE id=?', parent || null, name, row.id);
+    save(() => Object.assign(folder(row.id, owner(req)), { parent_id: parent || null, name }));
     res.json(folder(row.id, owner(req)));
   });
   app.delete('/api/folders/:id', (req, res) => {
     const row = folder(req.params.id, owner(req));
-    transaction(db, () => {
-      run(
-        'UPDATE notes SET folder_id=?,version=version+1,updated_at=? WHERE folder_id=?',
-        row.parent_id,
-        now(),
-        row.id,
-      );
-      run('UPDATE folders SET parent_id=? WHERE parent_id=?', row.parent_id, row.id);
-      run('DELETE FROM folders WHERE id=?', row.id);
+    save(() => {
+      const data = db(),
+        date = now();
+      for (const n of data.notes)
+        if (n.folder_id === row.id)
+          Object.assign(n, { folder_id: row.parent_id, version: n.version + 1, updated_at: date });
+      for (const f of data.folders) if (f.parent_id === row.id) f.parent_id = row.parent_id;
+      data.folders = data.folders.filter((f) => f.id !== row.id);
     });
     res.json({ ok: true });
   });
   app.post('/api/tags', (req, res) => {
     const name = text(req.body.name, 100).trim();
     if (!name) throw error(400, '标签不能为空');
-    let tag = get('SELECT * FROM tags WHERE user_id=? AND name=?', owner(req), name);
+    let tag = db().tags.find((t) => t.user_id === owner(req) && t.name === name);
     if (!tag) {
-      const id = uuid();
-      run('INSERT INTO tags(id,user_id,name) VALUES(?,?,?)', id, owner(req), name);
-      tag = get('SELECT * FROM tags WHERE id=?', id);
+      tag = { id: uuid(), user_id: owner(req), name, color: '#7084a4' };
+      save(() => db().tags.push(tag));
     }
     res.status(201).json(tag);
   });
   app.patch('/api/tags/:id', (req, res) => {
-    const row = get('SELECT * FROM tags WHERE id=? AND user_id=?', req.params.id, owner(req));
+    const row = db().tags.find((t) => t.id === req.params.id && t.user_id === owner(req));
     if (!row) throw error(404, '标签不存在');
     const name = text(req.body.name ?? row.name, 100).trim();
     if (!name) throw error(400, '标签不能为空');
     const color = text(req.body.color ?? row.color, 10);
-    if (!/^#[0-9a-f]{6}$/i.test(color)) throw error(400, '颜色无效');
-    run('UPDATE tags SET name=?,color=? WHERE id=?', name, color, row.id);
-    res.json(get('SELECT * FROM tags WHERE id=?', row.id));
+    if (!validColor(color)) throw error(400, '颜色无效');
+    if (db().tags.some((t) => t.user_id === owner(req) && t.name === name && t.id !== row.id))
+      throw error(409, '名称或标识已存在');
+    const updated = save(() => {
+      const tag = db().tags.find((t) => t.id === row.id);
+      return Object.assign(tag, { name, color });
+    });
+    res.json(updated);
   });
   app.delete('/api/tags/:id', (req, res) => {
-    transaction(db, () => {
-      run(
-        'UPDATE notes SET version=version+1,updated_at=? WHERE user_id=? AND id IN (SELECT note_id FROM note_tags WHERE tag_id=?)',
-        now(),
-        owner(req),
-        req.params.id,
-      );
-      run('DELETE FROM tags WHERE id=? AND user_id=?', req.params.id, owner(req));
+    save(() => {
+      const data = db(),
+        date = now();
+      if (!data.tags.some((t) => t.id === req.params.id && t.user_id === owner(req))) return;
+      for (const n of data.notes)
+        if (n.user_id === owner(req) && n.tags.includes(req.params.id))
+          Object.assign(n, {
+            tags: n.tags.filter((id) => id !== req.params.id),
+            version: n.version + 1,
+            updated_at: date,
+          });
+      data.tags = data.tags.filter((t) => t.id !== req.params.id);
     });
     res.json({ ok: true });
   });
   app.get('/api/notes', (req, res) => {
-    const values = [owner(req)],
-      where = [
-        'n.user_id=?',
-        req.query.view === 'trash' ? 'n.deleted_at IS NOT NULL' : 'n.deleted_at IS NULL',
-      ];
-    if (req.query.view === 'favorites') where.push('n.favorite=1');
+    const user = owner(req),
+      trash = req.query.view === 'trash';
+    let rows = db().notes.filter((n) => n.user_id === user && !!n.deleted_at === trash);
+    if (req.query.view === 'favorites') rows = rows.filter((n) => n.favorite);
     if (req.query.folder) {
-      folder(req.query.folder, owner(req));
-      where.push(
-        'n.folder_id IN (WITH RECURSIVE tree(id) AS (SELECT id FROM folders WHERE id=? UNION ALL SELECT f.id FROM folders f JOIN tree t ON f.parent_id=t.id) SELECT id FROM tree)',
-      );
-      values.push(req.query.folder);
+      folder(req.query.folder, user);
+      const tree = new Set([req.query.folder]),
+        folders = userFolders(user);
+      for (let size = 0; size !== tree.size;) {
+        size = tree.size;
+        for (const f of folders) if (tree.has(f.parent_id)) tree.add(f.id);
+      }
+      rows = rows.filter((n) => tree.has(n.folder_id));
     }
-    if (req.query.tag) {
-      where.push('EXISTS(SELECT 1 FROM note_tags nt WHERE nt.note_id=n.id AND nt.tag_id=?)');
-      values.push(req.query.tag);
-    }
+    if (req.query.tag) rows = rows.filter((n) => n.tags.includes(req.query.tag));
     if (req.query.q) {
-      const q = '%' + text(req.query.q, 500).replace(/[!%_]/g, '!$&') + '%';
-      where.push("(n.title LIKE ? ESCAPE '!' OR n.text LIKE ? ESCAPE '!')");
-      values.push(q, q);
+      const q = text(req.query.q, 500).toLowerCase();
+      rows = rows.filter(
+        (n) => n.title.toLowerCase().includes(q) || plainText(n).toLowerCase().includes(q),
+      );
     }
     const sorts = {
-      updated: 'n.updated_at',
-      created: 'n.created_at',
-      title: 'n.title COLLATE NOCASE',
+      updated: (n) => n.updated_at,
+      created: (n) => n.created_at,
+      title: (n) => n.title.toLowerCase(),
     };
     const sort = Object.hasOwn(sorts, req.query.sort) ? sorts[req.query.sort] : sorts.updated;
-    const direction = req.query.direction === 'asc' ? 'ASC' : 'DESC';
-    const rows = all(
-      `SELECT n.id,n.folder_id,n.title,n.type,n.favorite,n.pinned,n.deleted_at,n.created_at,n.updated_at,n.version,substr(n.text,1,240) excerpt,(SELECT COUNT(*) FROM attachments a WHERE a.note_id=n.id) attachment_count FROM notes n WHERE ${where.join(' AND ')} ORDER BY n.pinned DESC,${sort} ${direction}`,
-      ...values,
-    );
+    const direction = req.query.direction === 'asc' ? 1 : -1;
+    rows.sort((a, b) => b.pinned - a.pinned || direction * compare(sort(a), sort(b)));
+    const attachments = new Map();
+    for (const a of db().attachments)
+      attachments.set(a.note_id, (attachments.get(a.note_id) || 0) + 1);
     res.json(
-      rows.map((row) => ({
-        ...row,
-        favorite: !!row.favorite,
-        pinned: !!row.pinned,
-        tags: noteTags(row.id),
+      rows.map((n) => ({
+        id: n.id,
+        folder_id: n.folder_id,
+        title: n.title,
+        type: n.type,
+        favorite: n.favorite,
+        pinned: n.pinned,
+        deleted_at: n.deleted_at,
+        created_at: n.created_at,
+        updated_at: n.updated_at,
+        version: n.version,
+        excerpt: plainText(n).slice(0, 240),
+        attachment_count: attachments.get(n.id) || 0,
+        tags: noteTags(n),
       })),
     );
   });
   app.post('/api/notes', (req, res) =>
-    res.status(201).json(noteDetail(transaction(db, () => insertNote(owner(req), req.body)))),
+    res.status(201).json(noteDetail(save(() => insertNote(owner(req), req.body)))),
   );
   app.get('/api/notes/:id', (req, res) => res.json(noteDetail(note(req.params.id, owner(req)))));
   app.patch('/api/notes/:id', (req, res) => {
     const row = note(req.params.id, owner(req)),
+      current = store.body('notes', row.id),
       body = req.body;
     if (body.version !== row.version) throw error(409, '笔记已在其他窗口更新，请重新载入后编辑');
     if (row.deleted_at && !Object.hasOwn(body, 'deleted_at')) throw error(400, '请先恢复此笔记');
     const type = body.type ?? row.type;
     if (!allowedTypes.has(type)) throw error(400, '笔记类型错误');
     const title = text(body.title ?? row.title, 500),
-      content = cleanContent(body.content ?? row.content, type);
+      content = cleanContent(body.content ?? current.content, type);
     const folderId = Object.hasOwn(body, 'folder_id') ? body.folder_id : row.folder_id;
     if (folderId) folder(folderId, owner(req));
     const deleted = Object.hasOwn(body, 'deleted_at')
@@ -704,38 +755,40 @@ export function createApp({
       : row.deleted_at;
     const native = Object.hasOwn(body, 'editor_data')
       ? storedEditorData(body.editor_data)
-      : content !== row.content || type !== row.type
+      : content !== current.content || type !== row.type
         ? null
-        : row.editor_data;
-    transaction(db, () => {
-      if (
-        title !== row.title ||
-        content !== row.content ||
-        type !== row.type ||
-        native !== row.editor_data
-      )
-        revision(row);
-      run(
-        'UPDATE notes SET title=?,content=?,text=?,type=?,folder_id=?,favorite=?,pinned=?,deleted_at=?,updated_at=?,editor_data=?,version=version+1 WHERE id=?',
+        : current.editor_data;
+    save(() => {
+      const target = note(row.id, owner(req)),
+        bodyChanged =
+          content !== current.content || type !== target.type || native !== current.editor_data;
+      if (title !== target.title || bodyChanged) revision(target);
+      Object.assign(target, {
         title,
-        content,
-        type === 'markdown' ? content : extractText(content),
         type,
-        folderId || null,
-        Object.hasOwn(body, 'favorite') ? +!!body.favorite : row.favorite,
-        Object.hasOwn(body, 'pinned') ? +!!body.pinned : row.pinned,
-        deleted,
-        now(),
-        native,
-        row.id,
-      );
-      if (body.tags) setTags(row.id, body.tags, owner(req));
+        folder_id: folderId || null,
+        favorite: Object.hasOwn(body, 'favorite') ? !!body.favorite : target.favorite,
+        pinned: Object.hasOwn(body, 'pinned') ? !!body.pinned : target.pinned,
+        deleted_at: deleted,
+        updated_at: now(),
+        version: target.version + 1,
+      });
+      if (bodyChanged) store.setBody('notes', target.id, content, native);
+      if (body.tags) setTags(target, body.tags, owner(req));
     });
     res.json(noteDetail(note(row.id, owner(req))));
   });
-  function removeNote(row) {
-    const files = all('SELECT id FROM attachments WHERE note_id=?', row.id);
-    run('DELETE FROM notes WHERE id=?', row.id);
+  function removeNotes(ids) {
+    const files = db().attachments.filter((a) => ids.has(a.note_id));
+    save(() => {
+      const data = db();
+      for (const r of data.revisions) if (ids.has(r.note_id)) store.removeBody('revisions', r.id);
+      for (const id of ids) store.removeBody('notes', id);
+      data.revisions = data.revisions.filter((r) => !ids.has(r.note_id));
+      data.attachments = data.attachments.filter((a) => !ids.has(a.note_id));
+      data.comments = data.comments.filter((c) => !ids.has(c.note_id));
+      data.notes = data.notes.filter((n) => !ids.has(n.id));
+    });
     for (const file of files)
       try {
         unlinkSync(path.join(fileDir, file.id));
@@ -746,58 +799,63 @@ export function createApp({
   app.delete('/api/notes/:id', (req, res) => {
     const row = note(req.params.id, owner(req));
     if (!row.deleted_at) throw error(400, '请先移入回收站');
-    removeNote(row);
+    removeNotes(new Set([row.id]));
     res.json({ ok: true });
   });
   app.delete('/api/trash', (req, res) => {
-    for (const row of all(
-      'SELECT * FROM notes WHERE user_id=? AND deleted_at IS NOT NULL',
-      owner(req),
-    ))
-      removeNote(row);
+    removeNotes(
+      new Set(
+        db()
+          .notes.filter((n) => n.user_id === owner(req) && n.deleted_at)
+          .map((n) => n.id),
+      ),
+    );
     res.json({ ok: true });
   });
   app.post('/api/notes/:id/duplicate', (req, res) => {
     const row = note(req.params.id, owner(req)),
+      source = store.body('notes', row.id),
       written = [];
     let copied;
     try {
-      copied = transaction(db, () => {
+      copied = save(() => {
         const result = insertNote(owner(req), {
-            ...row,
+            folder_id: row.folder_id,
+            type: row.type,
             title: row.title + ' - 副本',
-            tags: noteTags(row.id).map((t) => t.id),
+            content: source.content,
+            editor_data: source.editor_data,
+            tags: row.tags,
           }),
           mapping = new Map();
-        for (const item of all('SELECT * FROM attachments WHERE note_id=?', row.id)) {
+        for (const item of db().attachments.filter((a) => a.note_id === row.id)) {
           const id = uuid();
           writeFileSync(path.join(fileDir, id), readFileSync(path.join(fileDir, item.id)), {
             flag: 'wx',
           });
           written.push(id);
           mapping.set(item.id, id);
-          run(
-            'INSERT INTO attachments VALUES(?,?,?,?,?,?)',
+          db().attachments.push({
             id,
-            result.id,
-            item.name,
-            item.mime,
-            item.size,
-            now(),
-          );
+            note_id: result.id,
+            name: item.name,
+            mime: item.mime,
+            size: item.size,
+            created_at: now(),
+          });
         }
-        const content = result.content.replace(
-          /\/files\/([a-f0-9-]{36})/g,
-          (_m, id) => '/files/' + (mapping.get(id) || id),
-        );
-        run(
-          'UPDATE notes SET content=?,text=?,editor_data=? WHERE id=?',
-          content,
-          result.type === 'markdown' ? content : extractText(content),
-          result.editor_data ? rewriteResources(result.editor_data, mapping) : null,
+        const copy = store.body('notes', result.id),
+          content = copy.content.replace(
+            /\/files\/([a-f0-9-]{36})/g,
+            (_m, id) => '/files/' + (mapping.get(id) || id),
+          );
+        store.setBody(
+          'notes',
           result.id,
+          content,
+          copy.editor_data ? rewriteResources(copy.editor_data, mapping) : null,
         );
-        return note(result.id, owner(req));
+        return result;
       });
     } catch (e) {
       for (const id of written)
@@ -813,33 +871,32 @@ export function createApp({
   app.get('/api/notes/:id/history', (req, res) => {
     note(req.params.id, owner(req));
     res.json(
-      all('SELECT * FROM revisions WHERE note_id=? ORDER BY version DESC', req.params.id).map(
-        (row) => ({ ...row, editor_data: editorData(row.editor_data) }),
-      ),
+      db()
+        .revisions.filter((r) => r.note_id === req.params.id)
+        .sort((a, b) => b.version - a.version)
+        .map((row) => {
+          const body = store.body('revisions', row.id);
+          return { ...row, content: body.content, editor_data: editorData(body.editor_data) };
+        }),
     );
   });
   app.post('/api/notes/:id/history/:revision/restore', (req, res) => {
     const row = note(req.params.id, owner(req));
     if (req.body.version !== row.version) throw error(409, '笔记版本已变化');
     if (row.deleted_at) throw error(400, '请先恢复此笔记');
-    const old = get(
-      'SELECT * FROM revisions WHERE id=? AND note_id=?',
-      req.params.revision,
-      row.id,
-    );
+    const old = db().revisions.find((r) => r.id === req.params.revision && r.note_id === row.id);
     if (!old) throw error(404, '历史版本不存在');
-    transaction(db, () => {
-      revision(row);
-      run(
-        'UPDATE notes SET title=?,content=?,text=?,type=?,editor_data=?,version=version+1,updated_at=? WHERE id=?',
-        old.title,
-        old.content,
-        old.type === 'markdown' ? old.content : extractText(old.content),
-        old.type,
-        old.editor_data,
-        now(),
-        row.id,
-      );
+    const previous = store.body('revisions', old.id);
+    save(() => {
+      const target = note(row.id, owner(req));
+      revision(target);
+      Object.assign(target, {
+        title: old.title,
+        type: old.type,
+        version: target.version + 1,
+        updated_at: now(),
+      });
+      store.setBody('notes', target.id, previous.content, previous.editor_data);
     });
     res.json(noteDetail(note(row.id, owner(req))));
   });
@@ -848,19 +905,25 @@ export function createApp({
     const row = note(req.params.id, owner(req));
     if (row.deleted_at) throw error(400, '请先恢复此笔记');
     const favorite = !!req.body.favorite;
-    run('UPDATE notes SET favorite=? WHERE id=?', +favorite, row.id);
+    save(() => {
+      note(row.id, owner(req)).favorite = favorite;
+    });
     res.json({ favorite });
   });
   app.post('/api/notes/:id/share', (req, res) => {
     const row = note(req.params.id, owner(req));
     if (row.deleted_at) throw error(400, '回收站中的笔记不能分享');
     const token = row.share_token || randomBytes(24).toString('hex');
-    run('UPDATE notes SET share_token=? WHERE id=?', token, row.id);
+    save(() => {
+      note(row.id, owner(req)).share_token = token;
+    });
     res.json({ token });
   });
   app.delete('/api/notes/:id/share', (req, res) => {
     const row = note(req.params.id, owner(req));
-    run('UPDATE notes SET share_token=NULL WHERE id=?', row.id);
+    save(() => {
+      note(row.id, owner(req)).share_token = null;
+    });
     res.json({ ok: true });
   });
   const uploadMb = Number(process.env.MAX_UPLOAD_MB || 100);
@@ -896,7 +959,7 @@ export function createApp({
       written = [];
     let imported;
     try {
-      imported = transaction(db, () => {
+      imported = save(() => {
         const row = insertNote(owner(req), {
           title: parsed.title || req.file.originalname.replace(/\.(?:zip|ziw)$/i, ''),
           folder_id: req.body.folder_id || null,
@@ -909,15 +972,14 @@ export function createApp({
             url = '/files/' + id;
           writeFileSync(path.join(fileDir, id), asset.data, { flag: 'wx' });
           written.push(id);
-          run(
-            'INSERT INTO attachments VALUES(?,?,?,?,?,?)',
+          db().attachments.push({
             id,
-            row.id,
-            path.posix.basename(asset.path),
-            inlineImage(asset.data) || 'application/octet-stream',
-            asset.data.length,
-            now(),
-          );
+            note_id: row.id,
+            name: path.posix.basename(asset.path),
+            mime: inlineImage(asset.data) || 'application/octet-stream',
+            size: asset.data.length,
+            created_at: now(),
+          });
           if (native)
             native = native
               .replaceAll('./' + asset.path, url)
@@ -928,15 +990,13 @@ export function createApp({
             .replaceAll(asset.path, url)
             .replaceAll(encodeURI(asset.path), url);
         }
-        content = cleanContent(content, 'common');
-        run(
-          'UPDATE notes SET content=?,text=?,editor_data=? WHERE id=?',
-          content,
-          extractText(content),
-          native ? storedEditorData(native) : null,
+        store.setBody(
+          'notes',
           row.id,
+          cleanContent(content, 'common'),
+          native ? storedEditorData(native) : null,
         );
-        return note(row.id, owner(req));
+        return row;
       });
     } catch (e) {
       for (const id of written)
@@ -951,13 +1011,14 @@ export function createApp({
   });
   app.get('/api/notes/:id/export/zip', (req, res) => {
     const row = note(req.params.id, owner(req)),
-      files = all('SELECT * FROM attachments WHERE note_id=?', row.id);
+      body = store.body('notes', row.id),
+      files = db().attachments.filter((a) => a.note_id === row.id);
     if (files.reduce((total, f) => total + f.size, 0) > uploadLimit)
       throw error(413, '导出资源超过 MAX_UPLOAD_MB，请改用服务器数据目录备份');
     const content =
-      row.type === 'markdown' ? cleanContent(marked.parse(row.content), 'common') : row.content;
+      row.type === 'markdown' ? cleanContent(marked.parse(body.content), 'common') : body.content;
     const archive = writeZip(
-      { ...row, content },
+      { ...row, content, editor_data: body.editor_data },
       files.map((f) => ({ ...f, data: readFileSync(path.join(fileDir, f.id)) })),
     );
     res.set({
@@ -1000,42 +1061,34 @@ export function createApp({
       }
       const mime = inlineImage(signature) || 'application/octet-stream';
       renameSync(req.file.path, path.join(fileDir, id));
+      const attachment = {
+        id,
+        note_id: current.id,
+        name,
+        mime,
+        size: req.file.size,
+        created_at: now(),
+      };
       try {
-        run(
-          'INSERT INTO attachments VALUES(?,?,?,?,?,?)',
-          id,
-          req.params.id,
-          name,
-          mime,
-          req.file.size,
-          now(),
-        );
+        save(() => db().attachments.push(attachment));
       } catch (e) {
         unlinkSync(path.join(fileDir, id));
         throw e;
       }
-      res
-        .status(201)
-        .json({ ...get('SELECT * FROM attachments WHERE id=?', id), url: '/files/' + id });
+      res.status(201).json({ ...attachment, url: '/files/' + id });
     },
   );
   app.get('/files/:id', (req, res) => {
-    const row = get(
-      'SELECT a.* FROM attachments a JOIN notes n ON n.id=a.note_id WHERE a.id=? AND n.user_id=?',
-      req.params.id,
-      owner(req),
-    );
+    const row = ownedAttachment(req.params.id, owner(req));
     if (!row) throw error(404, '附件不存在');
     sendFile(res, row);
   });
   app.delete('/api/attachments/:id', (req, res) => {
-    const row = get(
-      'SELECT a.* FROM attachments a JOIN notes n ON n.id=a.note_id WHERE a.id=? AND n.user_id=?',
-      req.params.id,
-      owner(req),
-    );
+    const row = ownedAttachment(req.params.id, owner(req));
     if (!row) throw error(404, '附件不存在');
-    run('DELETE FROM attachments WHERE id=?', row.id);
+    save(() => {
+      db().attachments = db().attachments.filter((a) => a.id !== row.id);
+    });
     try {
       unlinkSync(path.join(fileDir, row.id));
     } catch (e) {
@@ -1045,76 +1098,84 @@ export function createApp({
   });
   app.get('/api/notes/:id/comments', (req, res) => {
     note(req.params.id, owner(req));
-    res.json(all('SELECT * FROM comments WHERE note_id=? ORDER BY created_at', req.params.id));
+    res.json(
+      db()
+        .comments.filter((c) => c.note_id === req.params.id)
+        .sort(byCreated),
+    );
   });
   app.post('/api/notes/:id/comments', (req, res) => {
     const row = note(req.params.id, owner(req));
     if (row.deleted_at) throw error(400, '请先恢复此笔记');
     const body = text(req.body.body, 10000).trim();
     if (!body) throw error(400, '评论不能为空');
-    const id = uuid();
-    run('INSERT INTO comments VALUES(?,?,?,?)', id, row.id, body, now());
-    res.status(201).json(get('SELECT * FROM comments WHERE id=?', id));
+    const comment = { id: uuid(), note_id: row.id, body, created_at: now() };
+    save(() => db().comments.push(comment));
+    res.status(201).json(comment);
   });
   app.delete('/api/comments/:id', (req, res) => {
-    run(
-      'DELETE FROM comments WHERE id=? AND note_id IN (SELECT id FROM notes WHERE user_id=?)',
-      req.params.id,
-      owner(req),
-    );
+    save(() => {
+      const data = db();
+      data.comments = data.comments.filter(
+        (c) =>
+          c.id !== req.params.id ||
+          !data.notes.some((n) => n.id === c.note_id && n.user_id === owner(req)),
+      );
+    });
     res.json({ ok: true });
   });
+  // Backup ZIP: backup.json indexes everything; note and revision bodies are HTML files.
   app.get('/api/backup', (req, res) => {
     const user = owner(req),
-      notes = all('SELECT * FROM notes WHERE user_id=?', user),
-      files = all(
-        'SELECT a.* FROM attachments a JOIN notes n ON n.id=a.note_id WHERE n.user_id=?',
-        user,
-      );
+      notes = db().notes.filter((n) => n.user_id === user),
+      ids = new Set(notes.map((n) => n.id)),
+      files = db().attachments.filter((a) => ids.has(a.note_id)),
+      revisions = db().revisions.filter((r) => ids.has(r.note_id));
     const bytes = files.reduce((sum, f) => sum + f.size, 0);
     if (bytes > 100 * 1024 * 1024)
       throw error(413, '附件总量超过 100MB，请使用 README 中的服务器数据目录备份方式');
+    const entries = [];
+    const addBody = (kind, id) => {
+      const body = store.body(kind, id);
+      entries.push([`${kind}/${id}.html`, body.content]);
+      if (body.editor_data != null) entries.push([`${kind}/${id}.editor.json`, body.editor_data]);
+    };
+    for (const n of notes) addBody('notes', n.id);
+    for (const r of revisions) addBody('revisions', r.id);
+    for (const f of files)
+      entries.push([`attachments/${f.id}`, readFileSync(path.join(fileDir, f.id))]);
     const payload = {
       format: 'wixnote',
-      version: 1,
+      version: 2,
       exportedAt: now(),
-      folders: all('SELECT * FROM folders WHERE user_id=?', user),
-      tags: all('SELECT * FROM tags WHERE user_id=?', user),
-      notes: notes.map((n) => ({ ...n, tags: noteTags(n.id).map((t) => t.id) })),
-      attachments: files.map((f) => ({
-        ...f,
-        data: readFileSync(path.join(fileDir, f.id)).toString('base64'),
-      })),
-      revisions: all(
-        'SELECT r.* FROM revisions r JOIN notes n ON n.id=r.note_id WHERE n.user_id=?',
-        user,
-      ),
-      comments: all(
-        'SELECT c.* FROM comments c JOIN notes n ON n.id=c.note_id WHERE n.user_id=?',
-        user,
-      ),
+      folders: db().folders.filter((f) => f.user_id === user),
+      tags: db().tags.filter((t) => t.user_id === user),
+      notes,
+      attachments: files,
+      revisions,
+      comments: db().comments.filter((c) => ids.has(c.note_id)),
     };
     res.set(
       'Content-Disposition',
-      `attachment; filename="wixnote-backup-${now().slice(0, 10)}.json"`,
+      `attachment; filename="wixnote-backup-${now().slice(0, 10)}.zip"`,
     );
-    const serialized = JSON.stringify(payload);
-    if (Buffer.byteLength(serialized) > 150 * 1024 * 1024)
-      throw error(413, '备份超过网页导入大小限制，请使用数据目录备份');
-    res.type('application/json').send(serialized);
+    res.type('application/zip').send(writeBackupZip(payload, entries));
   });
   app.post('/api/import', (req, res) => {
-    const data = req.body,
+    if (!Buffer.isBuffer(req.body) || !req.body.length)
+      throw error(400, '请选择本站导出的 ZIP 备份');
+    const { data, files } = readBackupZip(req.body),
       user = owner(req),
       written = [];
     if (
+      !data ||
       data.format !== 'wixnote' ||
-      data.version !== 1 ||
+      data.version !== 2 ||
       !Array.isArray(data.notes) ||
       !Array.isArray(data.folders) ||
       !Array.isArray(data.tags)
     )
-      throw error(400, '请使用本站导出的 JSON 备份，HTML 和 Markdown 请在编辑器中导入');
+      throw error(400, '请使用本站导出的 ZIP 备份');
     const collections = ['folders', 'tags', 'notes', 'attachments', 'revisions', 'comments'];
     for (const key of collections)
       if (data[key] !== undefined && (!Array.isArray(data[key]) || data[key].length > 50000))
@@ -1134,129 +1195,104 @@ export function createApp({
       return maps[kind].get(id);
     };
     const rewrite = (value) => rewriteResources(value, maps.attachments);
+    const bodyOf = (kind, item) => {
+      const content = files.get(`${kind}/${item.id}.html`) ?? files.get(`${kind}/${item.id}.md`),
+        native = files.get(`${kind}/${item.id}.editor.json`);
+      if (!allowedTypes.has(item.type)) throw error(400, '备份笔记类型不正确');
+      const cleaned = cleanContent(
+        rewrite(text(content ? content.toString('utf8') : '', 5_000_000)),
+        item.type,
+      );
+      return [cleaned, native ? storedEditorData(rewrite(native.toString('utf8'))) : null];
+    };
     try {
-      transaction(db, () => {
-        for (const f of data.folders)
-          run(
-            'INSERT INTO folders VALUES(?,?,?,?,?)',
-            mapped('folders', f.id),
-            user,
-            null,
-            text(f.name, 100),
-            0,
-          );
+      save(() => {
+        const index = db();
+        const folders = data.folders.map((f) => ({
+          id: mapped('folders', f.id),
+          user_id: user,
+          parent_id: null,
+          name: text(f.name, 100),
+          position: Number.isSafeInteger(f.position) ? f.position : 0,
+        }));
         validateFolderTree(data.folders);
-        for (const folder of data.folders) {
-          run(
-            'UPDATE folders SET parent_id=? WHERE id=?',
-            mapped('folders', folder.parent_id),
-            mapped('folders', folder.id),
-          );
-        }
+        data.folders.forEach((f, i) => (folders[i].parent_id = mapped('folders', f.parent_id)));
+        index.folders.push(...folders);
         for (const t of data.tags) {
-          const existing = get(
-            'SELECT id FROM tags WHERE user_id=? AND name=?',
-            user,
-            text(t.name, 100),
-          );
+          const name = text(t.name, 100),
+            existing = index.tags.find((tag) => tag.user_id === user && tag.name === name);
           if (existing) maps.tags.set(t.id, existing.id);
           else
-            run(
-              'INSERT INTO tags(id,user_id,name) VALUES(?,?,?)',
-              mapped('tags', t.id),
-              user,
-              t.name,
-            );
+            index.tags.push({
+              id: mapped('tags', t.id),
+              user_id: user,
+              name,
+              color: validColor(t.color) ? t.color : '#7084a4',
+            });
         }
         for (const n of data.notes) {
-          if (!allowedTypes.has(n.type)) throw error(400, '备份笔记类型不正确');
-          const content = cleanContent(rewrite(text(n.content, 5_000_000)), n.type),
-            id = mapped('notes', n.id);
-          run(
-            'INSERT INTO notes(id,user_id,folder_id,title,content,text,type,favorite,pinned,deleted_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)',
-            id,
-            user,
-            mapped('folders', n.folder_id),
-            text(n.title, 500),
-            content,
-            n.type === 'markdown' ? content : extractText(content),
-            n.type,
-            +!!n.favorite,
-            +!!n.pinned,
-            n.deleted_at ? now() : null,
-            validDate(n.created_at),
-            validDate(n.updated_at),
-          );
-          run(
-            'UPDATE notes SET editor_data=?,version=? WHERE id=?',
-            n.editor_data
-              ? storedEditorData(
-                  rewrite(
-                    typeof n.editor_data === 'string'
-                      ? n.editor_data
-                      : JSON.stringify(n.editor_data),
-                  ),
-                )
-              : null,
-            validVersion(n.version),
-            id,
-          );
+          const [content, native] = bodyOf('notes', n),
+            row = {
+              id: mapped('notes', n.id),
+              user_id: user,
+              folder_id: mapped('folders', n.folder_id),
+              title: text(n.title, 500),
+              type: n.type,
+              favorite: !!n.favorite,
+              pinned: !!n.pinned,
+              deleted_at: n.deleted_at ? now() : null,
+              created_at: validDate(n.created_at),
+              updated_at: validDate(n.updated_at),
+              version: validVersion(n.version),
+              share_token: null,
+              tags: [],
+            };
+          index.notes.push(row);
+          store.setBody('notes', row.id, content, native);
           setTags(
-            id,
-            (n.tags || []).map((id) => mapped('tags', id)),
+            row,
+            (Array.isArray(n.tags) ? n.tags : []).map((id) => mapped('tags', id)),
             user,
           );
         }
         let total = 0;
         for (const f of data.attachments || []) {
-          if (typeof f.data !== 'string' || !/^[A-Za-z0-9+/]*={0,2}$/.test(f.data))
-            throw error(400, '附件编码无效');
-          const bytes = Buffer.from(f.data, 'base64');
+          const bytes = files.get(`attachments/${f.id}`);
+          if (!bytes) throw error(400, '备份缺少附件文件');
           total += bytes.length;
           if (total > 100 * 1024 * 1024) throw error(413, '附件备份过大');
           const id = mapped('attachments', f.id);
           writeFileSync(path.join(fileDir, id), bytes, { flag: 'wx' });
           written.push(id);
-          run(
-            'INSERT INTO attachments VALUES(?,?,?,?,?,?)',
+          index.attachments.push({
             id,
-            mapped('notes', f.note_id),
-            text(f.name, 500),
-            inlineImage(bytes) || 'application/octet-stream',
-            bytes.length,
-            validDate(f.created_at),
-          );
+            note_id: mapped('notes', f.note_id),
+            name: text(f.name, 500),
+            mime: inlineImage(bytes) || 'application/octet-stream',
+            size: bytes.length,
+            created_at: validDate(f.created_at),
+          });
         }
         for (const r of data.revisions || []) {
-          if (!allowedTypes.has(r.type)) throw error(400, '历史版本类型错误');
-          run(
-            'INSERT INTO revisions(id,note_id,title,content,type,created_at,version,editor_data) VALUES(?,?,?,?,?,?,?,?)',
-            mapped('revisions', r.id),
-            mapped('notes', r.note_id),
-            text(r.title, 500),
-            cleanContent(rewrite(text(r.content, 5_000_000)), r.type),
-            r.type,
-            validDate(r.created_at),
-            validVersion(r.version),
-            r.editor_data
-              ? storedEditorData(
-                  rewrite(
-                    typeof r.editor_data === 'string'
-                      ? r.editor_data
-                      : JSON.stringify(r.editor_data),
-                  ),
-                )
-              : null,
-          );
+          const [content, native] = bodyOf('revisions', r),
+            id = mapped('revisions', r.id);
+          index.revisions.push({
+            id,
+            note_id: mapped('notes', r.note_id),
+            title: text(r.title, 500),
+            type: r.type,
+            created_at: validDate(r.created_at),
+            version: validVersion(r.version),
+          });
+          store.setBody('revisions', id, content, native);
         }
         for (const c of data.comments || [])
-          run(
-            'INSERT INTO comments VALUES(?,?,?,?)',
-            mapped('comments', c.id),
-            mapped('notes', c.note_id),
-            text(c.body, 10000),
-            validDate(c.created_at),
-          );
+          index.comments.push({
+            id: mapped('comments', c.id),
+            note_id: mapped('notes', c.note_id),
+            body: text(c.body, 10000),
+            created_at: validDate(c.created_at),
+          });
       });
     } catch (e) {
       for (const id of written)
@@ -1286,8 +1322,6 @@ export function createApp({
     if (res.headersSent) return _next(err);
     if (err.type === 'entity.too.large')
       return res.status(413).json({ error: '请求内容超过大小限制' });
-    if (err.code === 'ERR_SQLITE_ERROR' && err.message.includes('UNIQUE'))
-      return res.status(409).json({ error: '名称或标识已存在' });
     const status = err.status || (err instanceof multer.MulterError ? 400 : 500);
     if (status >= 500 || !err.status) console.error(err);
     res.status(status).json({
@@ -1300,7 +1334,7 @@ export function createApp({
             : '请求数据无效',
     });
   });
-  app.locals.db = db;
+  app.locals.store = store;
   return app;
 }
 function validVersion(value) {
@@ -1320,10 +1354,5 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
     console.log(`wixnote ready on http://localhost:${port}`),
   );
   for (const signal of ['SIGINT', 'SIGTERM'])
-    process.on(signal, () =>
-      server.close(() => {
-        app.locals.db.close();
-        process.exit(0);
-      }),
-    );
+    process.on(signal, () => server.close(() => process.exit(0)));
 }

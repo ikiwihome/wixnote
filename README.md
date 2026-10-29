@@ -23,7 +23,7 @@
 
 灵眸笔记是一个简洁的私人笔记应用：富文本与大纲编辑、全文搜索、历史版本、多格式导出一应俱全，笔记数据始终留在你自己的服务器上。
 
-它基于 React + Express + SQLite 构建，整套服务打包为**单个容器镜像**，不需要外部数据库、Redis 或搜索集群，一条 `docker compose` 命令即可运行。
+它基于 React + Express 构建，笔记以 HTML 文件保存、由一个 JSON 索引文件管理，整套服务打包为**单个容器镜像**，不需要任何数据库、Redis 或搜索集群，一条 `docker compose` 命令即可运行。
 
 ## 界面截图
 
@@ -63,7 +63,7 @@
 
 - 只读链接分享与撤销，个人笔记评论。
 - 导出 Word、PDF、HTML、Markdown 和纯文本。
-- JSON 完整备份与追加式恢复。
+- ZIP 完整备份与追加式恢复。
 
 **体验与安全**
 
@@ -92,7 +92,7 @@ docker compose logs -f --tail=100
 
 笔记、历史版本、评论与附件保存在命名数据卷 `wixnote-data` 中，重建容器不会丢失。Compose 默认使用非 root 用户、只读根文件系统、`cap_drop: ALL`、健康检查与 `unless-stopped` 重启策略。
 
-重新部署时请沿用原来的 Compose 项目和数据卷；服务启动后会读取已有数据库，登录同一账户即可看到笔记。页面在服务短暂中断后会自动重连并刷新笔记列表；当前未保存的修改不会被自动覆盖。若会话已过期，需要重新登录。
+重新部署时请沿用原来的 Compose 项目和数据卷；服务启动后会读取已有数据目录，登录同一账户即可看到笔记。页面在服务短暂中断后会自动重连并刷新笔记列表；当前未保存的修改不会被自动覆盖。若会话已过期，需要重新登录。
 
 停止服务使用 `docker compose down`；`docker compose down -v` 会一并删除数据卷。
 
@@ -109,7 +109,7 @@ docker run -d --name wixnote --restart unless-stopped \
 ### 首次登录
 
 1. 打开首页，用邮箱 + 姓名 + 至少 10 位密码注册首个账户。
-2. 首个账户创建后 `ALLOW_REGISTRATION=false` 生效；其他用户需管理员放开该开关后再注册。
+2. 首个账户是管理员；其他用户注册默认关闭，管理员可在「设置 → 账户信息」中开启。
 3. 各账户的文件夹、标签、笔记与附件互相隔离。
 
 ## 配置项
@@ -120,9 +120,8 @@ docker run -d --name wixnote --restart unless-stopped \
 | -------------------- | -------------------------- | ------------------------------------------------------- |
 | `PORT`               | `8080`                     | Compose 映射的宿主机端口（容器内始终是 `3000`）         |
 | `HOST`               | `0.0.0.0`                  | 服务监听地址                                            |
-| `DATA_DIR`           | `./data`（镜像内 `/data`） | SQLite 数据库与附件目录                                 |
+| `DATA_DIR`           | `./data`（镜像内 `/data`） | 笔记文件、索引与附件目录                                |
 | `MAX_UPLOAD_MB`      | `100`                      | 单个附件与解压后 ZIP 资源大小上限，取值 1–1024          |
-| `ALLOW_REGISTRATION` | `false`                    | 首个账户之后是否允许继续注册                            |
 | `SECURE_COOKIE`      | `false`                    | 通过 HTTPS 访问时设为 `true`，会话 Cookie 将带 `Secure` |
 | `CHROMIUM_PATH`      | 自动查找                   | PDF 导出所用 Chromium 或 Chrome 可执行文件的路径        |
 | `WIX_RESET_PASSWORD` | 空                         | 仅用于密码重置脚本的非交互模式                          |
@@ -143,7 +142,7 @@ pnpm run dev
 
 - 前端开发页面：<http://localhost:5173>（Vite，`/api` 与 `/files` 代理到 3000）
 - API / 后端：<http://localhost:3000>
-- 本地数据库默认写入 `data/`
+- 本地数据默认写入 `data/`
 
 若 3000 端口已被生产预览占用，请先停止该进程。
 
@@ -173,20 +172,22 @@ curl http://localhost:3000/api/health  # 返回 {"ok":true,...}
 
 ```text
 data/
-├── wixnote.sqlite        # 账户、会话、文件夹、标签、笔记、历史、评论、附件元数据
-├── wixnote.sqlite-wal    # WAL 文件（运行时存在）
-├── wixnote.sqlite-shm    # 共享内存文件（运行时存在）
+├── index.json            # 索引：账户、会话、文件夹、标签、笔记元数据、历史、评论、附件元数据、注册开关
+├── notes/                # 笔记正文，<笔记 ID>.html；原生编辑器块保存在 <笔记 ID>.editor.json
+├── revisions/            # 历史版本正文，格式同 notes/
 ├── attachments/          # 附件二进制，按附件 ID 命名
 └── .uploads/             # 上传临时目录
 ```
 
-账号与会话也在数据库内，恢复数据库即恢复了登录状态。
+账号与会话也在 `index.json` 内，恢复数据目录即恢复了登录状态。笔记正文是普通 HTML 文件，可以直接用浏览器打开查看（Markdown 类型的笔记保存的是 Markdown 源文本，以免编辑时丢失格式）；服务会在文件修改后重新读取。
 
-### 应用内 JSON 备份
+首次启动时应用会自动创建 `index.json` 和所需目录；重启时继续使用已有数据。从 1.x 升级时，如果数据目录中只有旧的 `wixnote.sqlite`，首次启动会自动把它迁移为上述文件结构（原 SQLite 文件保留不动，确认无误后可自行删除）。容器中的进程以 UID/GID `1000:1000` 运行，数据目录及其中文件必须对该用户可读写。如果启动日志提示无法创建数据目录或读取索引文件，请检查 `/data` 实际挂载的位置、磁盘空间和权限；不要删除已有数据来排查。对于宿主机目录挂载，可在确认路径后调整该目录的所有权，例如 `sudo chown -R 1000:1000 /实际数据目录`。
 
-在「设置 → 数据管理」中导出 JSON，内容包含文件夹、笔记原生块、标签、评论、历史与附件（附件以 base64 内嵌）。导入为**追加**模式：重新映射 ID 后插入，不覆盖已有内容。
+### 应用内 ZIP 备份
 
-限制：单次备份的附件总量上限 100 MB，序列化后 JSON 上限 150 MB，超出时请改用数据目录备份。
+在「设置 → 数据管理」中导出 ZIP。压缩包内 `backup.json` 为索引（文件夹、标签、笔记元数据、评论、历史、附件信息），`notes/`、`revisions/` 下为 HTML 正文，`attachments/` 下为附件。导入同样只接受本站导出的 ZIP。导入为**追加**模式：重新映射 ID 后插入，不覆盖已有内容。
+
+限制：单次备份的附件总量上限 100 MB，上传的 ZIP 上限 160 MB，超出时请改用数据目录备份。
 
 ### 数据目录备份（推荐用于大规模数据）
 
@@ -196,7 +197,7 @@ docker compose cp wixnote:/data ./wixnote-data-backup
 docker compose start
 ```
 
-还原时先停止服务，把备份放回数据卷或挂载目录，确保 UID/GID `1000:1000` 可写。SQLite 文件与 `attachments/` 必须作为同一次备份一起还原。
+还原时先停止服务，把备份放回数据卷或挂载目录，确保 UID/GID `1000:1000` 可写。`index.json`、`notes/`、`revisions/` 与 `attachments/` 必须作为同一次备份一起还原。
 
 ### 重置密码
 
@@ -215,7 +216,7 @@ DATA_DIR=./data node scripts/reset-password.js you@example.com
 WIX_RESET_PASSWORD='new-password-123' node scripts/reset-password.js you@example.com
 ```
 
-该命令只读写本地数据库，不会发邮件或连接官方服务器。
+该命令只读写本地的 `index.json`，运行中的服务会自动读取新密码；不会发邮件或连接官方服务器。
 
 ## 部署到公网
 
@@ -241,7 +242,7 @@ server {
 
 启用 HTTPS 后务必设置 `SECURE_COOKIE=true`。分享链接使用浏览器访问地址生成；图片以内联方式返回，其他附件强制下载。
 
-`client_max_body_size` 需覆盖 JSON 备份导入（上限 150 MB）与附件上传。
+`client_max_body_size` 需覆盖 ZIP 备份导入与附件上传。
 
 ## 项目结构
 
@@ -256,7 +257,8 @@ server {
 │   └── style.css
 ├── server/
 │   ├── index.js             # Express 应用、全部 REST 路由、安全中间件
-│   ├── db.js                # node:sqlite 打开与 schema 迁移
+│   ├── store.js             # index.json 索引与 HTML 正文的读写、事务
+│   ├── migrate.js           # 从 1.x SQLite 数据目录一次性迁移
 │   ├── document.js          # 原生编辑器块校验与资源路径重写
 │   └── zip.js               # ZIP 读写
 ├── public/

@@ -28,6 +28,35 @@ function readEntry(entry, limit) {
     throw failure('ZIP 资源长度或校验不匹配');
   return data;
 }
+// A backup holds backup.json (the index) plus notes/*.html, revisions/*.html and attachments/*.
+export function readBackupZip(buffer, maxBytes = 512 * 1024 * 1024) {
+  try {
+    const entries = new AdmZip(buffer).getEntries();
+    if (entries.length > 300000) throw failure('备份 ZIP 文件数量过多');
+    const files = new Map();
+    let total = 0;
+    for (const entry of entries) {
+      if (entry.isDirectory) continue;
+      if (entry.header.flags & 1) throw failure('不支持加密的备份 ZIP');
+      total += entry.header.size;
+      if (total > maxBytes) throw failure('备份 ZIP 解压后超过大小限制');
+      files.set(entry.entryName, readEntry(entry, maxBytes));
+    }
+    const index = files.get('backup.json');
+    if (!index) throw failure('备份 ZIP 缺少 backup.json');
+    files.delete('backup.json');
+    return { data: JSON.parse(index.toString('utf8')), files };
+  } catch (err) {
+    if (err.status) throw err;
+    throw failure('备份 ZIP 损坏或格式不正确');
+  }
+}
+export function writeBackupZip(data, files) {
+  const zip = new AdmZip();
+  zip.addFile('backup.json', Buffer.from(JSON.stringify(data, null, 2)));
+  for (const [name, value] of files) zip.addFile(name, Buffer.from(value));
+  return zip.toBuffer();
+}
 export function readZip(buffer, maxBytes = 100 * 1024 * 1024) {
   let zip;
   try {

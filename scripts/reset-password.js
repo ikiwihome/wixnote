@@ -1,28 +1,25 @@
-import { DatabaseSync } from 'node:sqlite';
 import { randomBytes, scryptSync } from 'node:crypto';
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync, writeFileSync, renameSync } from 'node:fs';
 import readline from 'node:readline';
 import path from 'node:path';
 const email = process.argv[2],
-  file = path.join(process.env.DATA_DIR || 'data', 'wixnote.sqlite');
+  file = path.join(process.env.DATA_DIR || 'data', 'index.json');
 if (!email || !existsSync(file)) {
   console.error(
     'Usage: node scripts/reset-password.js account@example.com (with DATA_DIR configured)',
   );
   process.exit(1);
 }
-const db = new DatabaseSync(file);
-db.exec('PRAGMA busy_timeout=5000');
-if (!db.prepare('SELECT id FROM users WHERE email=?').get(email)) {
+const findUser = (index) =>
+  index.users.find((user) => user.email.toLowerCase() === email.trim().toLowerCase());
+if (!findUser(JSON.parse(readFileSync(file, 'utf8')))) {
   console.error('Account not found');
-  db.close();
   process.exit(1);
 }
 let password = process.env.WIX_RESET_PASSWORD;
 if (!password) {
   if (!process.stdin.isTTY) {
     console.error('An interactive terminal or WIX_RESET_PASSWORD is required');
-    db.close();
     process.exit(1);
   }
   process.stdout.write('New password (10+ characters): ');
@@ -54,21 +51,16 @@ if (!password) {
 }
 if (password.length < 10 || password.length > 200) {
   console.error('Password must contain 10–200 characters');
-  db.close();
   process.exit(1);
 }
 const salt = randomBytes(16).toString('hex'),
   encoded = salt + ':' + scryptSync(password, salt, 64).toString('hex');
-db.exec('BEGIN IMMEDIATE');
-try {
-  const user = db.prepare('SELECT id FROM users WHERE email=?').get(email);
-  db.prepare('UPDATE users SET password=? WHERE id=?').run(encoded, user.id);
-  db.prepare('DELETE FROM sessions WHERE user_id=?').run(user.id);
-  db.exec('COMMIT');
-  console.log('Password reset; existing sessions have been revoked.');
-} catch (e) {
-  db.exec('ROLLBACK');
-  throw e;
-} finally {
-  db.close();
-}
+// Re-read right before writing; the running server reloads index.json when it changes.
+const index = JSON.parse(readFileSync(file, 'utf8')),
+  user = findUser(index);
+user.password = encoded;
+index.sessions = index.sessions.filter((session) => session.user_id !== user.id);
+const temporary = file + '.' + process.pid + '.tmp';
+writeFileSync(temporary, JSON.stringify(index, null, 2));
+renameSync(temporary, file);
+console.log('Password reset; existing sessions have been revoked.');

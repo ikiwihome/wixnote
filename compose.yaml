@@ -10,7 +10,6 @@ services:
       TZ: Asia/Shanghai
       DATA_DIR: /data
       MAX_UPLOAD_MB: ${MAX_UPLOAD_MB:-100}
-      ALLOW_REGISTRATION: ${ALLOW_REGISTRATION:-false}
       SECURE_COOKIE: ${SECURE_COOKIE:-false}
     volumes:
       - wixnote-data:/data
