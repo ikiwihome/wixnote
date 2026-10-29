@@ -10,9 +10,18 @@ export async function api(url, options = {}) {
     },
     body: body == null ? undefined : body instanceof FormData ? body : JSON.stringify(body),
   });
-  const data = await response.json().catch(() => ({ error: '服务器返回了无效响应' }));
+  const data = await response.json().catch(() => null);
   if (!response.ok)
-    throw Object.assign(new Error(data.error || '请求失败'), { status: response.status });
+    throw Object.assign(
+      new Error(
+        data?.error ||
+          (response.status === 413
+            ? '请求内容过大，请检查服务器或反向代理的请求大小限制'
+            : `请求失败（HTTP ${response.status}）`),
+      ),
+      { status: response.status },
+    );
+  if (!data || typeof data !== 'object') throw new Error('服务器返回了无效响应');
   return data;
 }
 export function download(name, value, type = 'text/plain;charset=utf-8') {

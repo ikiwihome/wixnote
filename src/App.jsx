@@ -257,10 +257,28 @@ export default function App() {
     [error, setError] = useState('');
   const publicToken = location.pathname.match(/^\/s\/([a-f0-9]{48})$/)?.[1];
   useEffect(() => {
-    if (!publicToken)
-      api('/auth')
-        .then(setAuth)
-        .catch((e) => setError(e.message));
+    if (publicToken) return;
+    let active = true;
+    let timer;
+    const connect = async () => {
+      try {
+        const result = await api('/auth');
+        if (active) {
+          setError('');
+          setAuth(result);
+        }
+      } catch (e) {
+        if (active) {
+          setError(e.message);
+          timer = setTimeout(connect, 5000);
+        }
+      }
+    };
+    connect();
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
   }, [publicToken]);
   if (publicToken) return <PublicNote token={publicToken} />;
   if (error)
@@ -302,6 +320,7 @@ function Workspace({ onLogout }) {
     [dialog, setDialog] = useState(null),
     [toast, setToast] = useState(null),
     [saveStatus, setSaveStatus] = useState('saved'),
+    [saveError, setSaveError] = useState(''),
     [listLoading, setListLoading] = useState(true),
     [resetKey, setResetKey] = useState(0),
     [refreshKey, setRefreshKey] = useState(0),
@@ -330,19 +349,36 @@ function Workspace({ onLogout }) {
     toastTimer.current = setTimeout(() => setToast(null), 5500);
   }, []);
   const onError = useCallback((e) => notify(e, 'error'), [notify]);
-  const refresh = useCallback(async () => {
-    try {
-      const data = await api('/bootstrap');
-      setBoot(data);
-      return data;
-    } catch (e) {
-      onError(e);
-    }
-  }, [onError]);
+  const refresh = useCallback(
+    async (silent = false) => {
+      try {
+        const data = await api('/bootstrap');
+        setBoot(data);
+        return data;
+      } catch (e) {
+        if (!silent) onError(e);
+      }
+    },
+    [onError],
+  );
   useEffect(() => {
     refresh();
     return () => {
       clearTimeout(toastTimer.current);
+    };
+  }, [refresh]);
+  useEffect(() => {
+    const sync = async () => {
+      if (document.visibilityState !== 'visible') return;
+      if (await refresh(true)) setRefreshKey((k) => k + 1);
+    };
+    const timer = setInterval(sync, 30000);
+    window.addEventListener('online', sync);
+    document.addEventListener('visibilitychange', sync);
+    return () => {
+      clearInterval(timer);
+      window.removeEventListener('online', sync);
+      document.removeEventListener('visibilitychange', sync);
     };
   }, [refresh]);
   useEffect(() => {
@@ -377,6 +413,7 @@ function Workspace({ onLogout }) {
     nativeDirtyRef.current = false;
     setDraft(row);
     setSaveStatus(recovered ? 'dirty' : 'saved');
+    setSaveError('');
     setEditing(!!recovered);
     setResetKey((k) => k + 1);
   }, []);
@@ -401,6 +438,7 @@ function Workspace({ onLogout }) {
         generation = dirtyRef.current,
         attachmentsAtStart = attachmentEpoch.current;
       setSaveStatus('saving');
+      setSaveError('');
       try {
         const saved = await api('/notes/' + snapshot.id, {
           method: 'PATCH',
@@ -456,6 +494,7 @@ function Workspace({ onLogout }) {
         return true;
       } catch (e) {
         setSaveStatus(e.status === 409 ? 'conflict' : 'error');
+        setSaveError(e.status ? e.message : '无法连接服务器，请检查网络连接后重试。');
         onError(e);
         return false;
       }
@@ -1521,7 +1560,7 @@ function Workspace({ onLogout }) {
                 <span>
                   {saveStatus === 'conflict'
                     ? '此笔记在其他窗口有更新，当前编辑尚未保存。'
-                    : '无法保存，请检查服务器连接。'}
+                    : `无法保存：${saveError}`}
                 </span>
                 {saveStatus === 'error' && <button onClick={() => flush()}>重试</button>}
                 <button

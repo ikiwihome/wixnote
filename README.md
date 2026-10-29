@@ -92,6 +92,8 @@ docker compose logs -f --tail=100
 
 笔记、历史版本、评论与附件保存在命名数据卷 `wixnote-data` 中，重建容器不会丢失。Compose 默认使用非 root 用户、只读根文件系统、`cap_drop: ALL`、健康检查与 `unless-stopped` 重启策略。
 
+重新部署时请沿用原来的 Compose 项目和数据卷；服务启动后会读取已有数据库，登录同一账户即可看到笔记。页面在服务短暂中断后会自动重连并刷新笔记列表；当前未保存的修改不会被自动覆盖。若会话已过期，需要重新登录。
+
 停止服务使用 `docker compose down`；`docker compose down -v` 会一并删除数据卷。
 
 ### 直接使用 Docker
