@@ -124,6 +124,7 @@ Copy `.env.example` to `.env`, adjust it, then run `docker compose up -d --build
 | `MAX_UPLOAD_MB`      | `100`                       | Size limit for one attachment and for extracted ZIP assets, 1–1024     |
 | `ALLOW_REGISTRATION` | `false`                     | Whether more accounts can register after the first one                 |
 | `SECURE_COOKIE`      | `false`                     | Set to `true` when served over HTTPS so the session cookie is `Secure` |
+| `CHROMIUM_PATH`      | auto-detected               | Path to Chromium or Chrome used for PDF export                         |
 | `WIX_RESET_PASSWORD` | empty                       | Only used by the password reset script in non-interactive mode         |
 
 To use a host directory instead, change the Compose volume mapping to `./data:/data`. On Linux the directory must be readable and writable by UID/GID `1000:1000`.
@@ -131,6 +132,8 @@ To use a host directory instead, change the Compose volume mapping to `./data:/d
 ## Local development
 
 Requires Node.js 24.22.1 or later and pnpm 12.3.4; Docker is not needed:
+
+Direct PDF export also requires Chromium or Chrome and suitable CJK fonts. Set `CHROMIUM_PATH` if the browser is not detected automatically. The Docker image includes Chromium and CJK fonts.
 
 ```sh
 npm install --global pnpm@12.3.4

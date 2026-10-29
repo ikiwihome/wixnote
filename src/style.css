@@ -2073,8 +2073,31 @@ kbd {
   margin-bottom: 12px;
 }
 .auth-card .field input {
-  height: 40px;
+  height: 44px;
   font-size: 14px;
+}
+.auth-password {
+  position: relative;
+  display: block;
+}
+.auth-card .auth-password input {
+  padding-right: 52px;
+}
+.auth-password-toggle {
+  position: absolute;
+  top: 0;
+  right: 0;
+  width: 44px;
+  height: 44px;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+}
+.auth-password-toggle:hover {
+  color: var(--primary);
+}
+.auth-field-hint {
+  font-size: 12px;
+  color: var(--muted);
 }
 .auth-submit {
   width: 100%;

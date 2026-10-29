@@ -21,6 +21,7 @@ import { readZip, writeZip } from './zip.js';
 import { marked } from 'marked';
 import { decodeHTML } from 'entities';
 import { editorData, storedEditorData, rewriteResources } from './document.js';
+import { chromium } from 'playwright-core';
 
 const project = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const now = () => new Date().toISOString();
@@ -277,7 +278,11 @@ export function createApp({
     noteJson = express.json({ limit: '12mb' }),
     backupJson = express.json({ limit: '160mb' });
   app.use((req, res, next) => {
-    const parser = !req.user ? publicJson : req.path === '/api/import' ? backupJson : noteJson;
+    const parser = !req.user
+      ? publicJson
+      : ['/api/import', '/api/export/pdf'].includes(req.path)
+        ? backupJson
+        : noteJson;
     parser(req, res, next);
   });
   function authAttempt(req, kind) {
@@ -415,6 +420,33 @@ export function createApp({
   app.use(['/api', '/files'], (req, _res, next) => {
     if (!req.user) return next(error(401, '请先登录'));
     next();
+  });
+  app.post('/api/export/pdf', async (req, res) => {
+    const html = text(req.body.html, 160 * 1024 * 1024);
+    const executablePath = [
+      process.env.CHROMIUM_PATH,
+      '/usr/bin/chromium',
+      '/usr/bin/chromium-browser',
+      process.env.PROGRAMFILES &&
+        path.join(process.env.PROGRAMFILES, 'Google/Chrome/Application/chrome.exe'),
+      process.env['PROGRAMFILES(X86)'] &&
+        path.join(process.env['PROGRAMFILES(X86)'], 'Microsoft/Edge/Application/msedge.exe'),
+    ].find((candidate) => candidate && existsSync(candidate));
+    if (!executablePath) throw error(503, 'PDF 导出需要安装 Chromium 并设置 CHROMIUM_PATH');
+    const browser = await chromium.launch({ executablePath, headless: true });
+    try {
+      const context = await browser.newContext({
+        javaScriptEnabled: false,
+        serviceWorkers: 'block',
+      });
+      await context.route('**/*', (route) => route.abort());
+      const page = await context.newPage();
+      await page.setContent(html, { waitUntil: 'load', timeout: 30000 });
+      const pdf = await page.pdf({ format: 'A4', printBackground: true, preferCSSPageSize: true });
+      res.type('application/pdf').send(pdf);
+    } finally {
+      await browser.close();
+    }
   });
   app.get('/api/bootstrap', (req, res) => {
     res.json({

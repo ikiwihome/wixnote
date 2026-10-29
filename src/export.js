@@ -64,31 +64,21 @@ export async function exportDocument(note, format, safeName) {
     );
     return;
   }
-  const style = document.createElement('style');
-  style.textContent = documentStyles;
-  const host = document.createElement('div');
-  host.style.cssText = 'position:absolute;left:-10000px;top:0;width:166mm;';
-  host.append(article);
-  document.head.append(style);
-  document.body.append(host);
-  try {
-    await Promise.all(
-      [...article.querySelectorAll('img')].map((img) => img.decode().catch(() => {})),
-    );
-    const { default: html2pdf } = await import('html2pdf.js');
-    const pdf = await html2pdf()
-      .set({
-        margin: 22,
-        image: { type: 'jpeg', quality: 0.95 },
-        html2canvas: { scale: 2, backgroundColor: '#ffffff', useCORS: true },
-        jsPDF: { unit: 'mm', format: 'a4', orientation: 'portrait' },
-        pagebreak: { mode: ['css', 'legacy'] },
-      })
-      .from(article)
-      .outputPdf('blob');
-    download(safeName + '.pdf', pdf, 'application/pdf');
-  } finally {
-    host.remove();
-    style.remove();
+  const htmlDocument = `<!doctype html><html><head><meta charset="utf-8"><style>${documentStyles}
+      @page { size: A4; margin: 22mm; }
+      body { margin: 0; }
+      .export-document { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+      .export-document img { break-inside: avoid; }
+    </style></head><body>${article.outerHTML}</body></html>`;
+  const response = await fetch('/api/export/pdf', {
+    method: 'POST',
+    credentials: 'same-origin',
+    headers: { 'Content-Type': 'application/json', 'X-Wix-Request': '1' },
+    body: JSON.stringify({ html: htmlDocument }),
+  });
+  if (!response.ok) {
+    const data = await response.json().catch(() => ({}));
+    throw new Error(data.error || 'PDF 导出失败，请重试');
   }
+  download(safeName + '.pdf', await response.blob(), 'application/pdf');
 }

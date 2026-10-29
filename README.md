@@ -122,6 +122,7 @@ docker run -d --name wixnote --restart unless-stopped \
 | `MAX_UPLOAD_MB`      | `100`                      | 单个附件与解压后 ZIP 资源大小上限，取值 1–1024          |
 | `ALLOW_REGISTRATION` | `false`                    | 首个账户之后是否允许继续注册                            |
 | `SECURE_COOKIE`      | `false`                    | 通过 HTTPS 访问时设为 `true`，会话 Cookie 将带 `Secure` |
+| `CHROMIUM_PATH`      | 自动查找                   | PDF 导出所用 Chromium 或 Chrome 可执行文件的路径        |
 | `WIX_RESET_PASSWORD` | 空                         | 仅用于密码重置脚本的非交互模式                          |
 
 希望使用宿主机目录时，把 Compose 的卷映射改成 `./data:/data`；Linux 上该目录需允许 UID/GID `1000:1000` 读写。
@@ -129,6 +130,8 @@ docker run -d --name wixnote --restart unless-stopped \
 ## 本地开发
 
 需要 Node.js 24.22.1 或更高版本、pnpm 12.3.4，无需 Docker：
+
+直接导出 PDF 还需要安装 Chromium 或 Chrome 及中文字体；如未自动找到浏览器，请设置 `CHROMIUM_PATH`。Docker 镜像已包含 Chromium 和中文字体。
 
 ```sh
 npm install --global pnpm@12.3.4

@@ -41,6 +41,8 @@ import {
   Link2,
   Save,
   Pencil,
+  Eye,
+  EyeOff,
 } from 'lucide-react';
 import TurndownService from 'turndown';
 import { exportDocument } from './export.js';
@@ -69,6 +71,7 @@ function Auth({ auth, onLogin }) {
     [name, setName] = useState(''),
     [email, setEmail] = useState(''),
     [password, setPassword] = useState(''),
+    [showPassword, setShowPassword] = useState(false),
     [err, setErr] = useState(''),
     [busy, setBusy] = useState(false);
   // Tabs only make sense when there is something to switch to.
@@ -87,6 +90,7 @@ function Auth({ auth, onLogin }) {
                 className={!register ? 'selected' : ''}
                 onClick={() => {
                   setRegister(false);
+                  setShowPassword(false);
                   setErr('');
                 }}
               >
@@ -96,6 +100,7 @@ function Auth({ auth, onLogin }) {
                 className={register ? 'selected' : ''}
                 onClick={() => {
                   setRegister(true);
+                  setShowPassword(false);
                   setErr('');
                 }}
               >
@@ -131,6 +136,7 @@ function Auth({ auth, onLogin }) {
         >
           {register && (
             <label className="field">
+              <span>昵称</span>
               <input
                 aria-label="昵称"
                 required
@@ -144,28 +150,54 @@ function Auth({ auth, onLogin }) {
             </label>
           )}
           <label className="field">
+            <span>邮箱</span>
             <input
               aria-label="邮箱"
               required
               type="email"
+              inputMode="email"
+              autoCapitalize="none"
+              spellCheck={false}
               autoComplete="username"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="邮箱"
             />
           </label>
-          <label className="field">
-            <input
-              aria-label="密码"
-              required
-              type="password"
-              minLength={register ? 10 : 1}
-              autoComplete={register ? 'new-password' : 'current-password'}
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              placeholder={register ? '密码（至少 10 位）' : '密码'}
-            />
-          </label>
+          <div className="field">
+            <label htmlFor="auth-password">密码</label>
+            <span className="auth-password">
+              <input
+                id="auth-password"
+                aria-label="密码"
+                aria-describedby={register ? 'auth-password-hint' : undefined}
+                required
+                type={showPassword ? 'text' : 'password'}
+                minLength={register ? 10 : 1}
+                maxLength={200}
+                autoComplete={register ? 'new-password' : 'current-password'}
+                autoCapitalize="none"
+                spellCheck={false}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder={register ? '设置密码' : '输入密码'}
+              />
+              <button
+                type="button"
+                className="auth-password-toggle"
+                aria-label={showPassword ? '隐藏密码' : '显示密码'}
+                aria-pressed={showPassword}
+                onClick={() => setShowPassword((visible) => !visible)}
+              >
+                {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+              </button>
+            </span>
+            {register && (
+              <span id="auth-password-hint" className="auth-field-hint">
+                至少 10 位
+              </span>
+            )}
+          </div>
           {err && (
             <p className="error-text" role="alert">
               {err}
