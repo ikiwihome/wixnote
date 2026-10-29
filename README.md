@@ -281,3 +281,20 @@ server {
 ## 许可证
 
 [MIT](LICENSE)
+
+## API Key 与命令行
+
+在「设置 → API Key」中创建密钥并立即复制；密钥只显示一次，可以随时撤销。密钥只允许访问所属账户的笔记读写接口。请通过 HTTPS 连接远程服务。
+
+设置环境变量 `WIXNOTE_URL`（例如 `http://localhost:8080`）和 `WIXNOTE_API_KEY`，然后在项目目录执行：
+
+```sh
+node scripts/wixnote-cli.js list              # 列出笔记（JSON）
+node scripts/wixnote-cli.js list 关键词       # 搜索
+node scripts/wixnote-cli.js get 笔记ID        # 查看完整笔记（JSON）
+node scripts/wixnote-cli.js create 标题 note.md # 创建 Markdown 笔记
+node scripts/wixnote-cli.js update 笔记ID note.md # 更新 Markdown 正文
+cat note.md | node scripts/wixnote-cli.js create 标题 -
+```
+
+`update` 先读取版本并使用版本检查保存，发生并发修改时会报错；为保护编辑器数据，它只更新 Markdown 笔记。密钥不会包含在备份中，恢复服务后需要重新创建。

@@ -13,6 +13,7 @@ import {
   History as HistoryIcon,
   Link2,
   Copy,
+  KeyRound,
 } from 'lucide-react';
 import { api, download, date, timeAgo } from './api.js';
 import { SafeContent } from './Editor.jsx';
@@ -242,7 +243,10 @@ export function Settings({ bootstrap, onClose, onChanged, onLogout, onError }) {
     [password, setPassword] = useState(''),
     [current, setCurrent] = useState(''),
     [busy, setBusy] = useState(false),
-    [notice, setNotice] = useState('');
+    [notice, setNotice] = useState(''),
+    [keys, setKeys] = useState([]),
+    [keyName, setKeyName] = useState('CLI'),
+    [newKey, setNewKey] = useState('');
   const input = useRef();
   const settings = bootstrap.settings;
   const setting = async (key, value) => {
@@ -257,6 +261,7 @@ export function Settings({ bootstrap, onClose, onChanged, onLogout, onError }) {
     ['account', User, '账户信息'],
     ['appearance', Palette, '阅读与外观'],
     ['data', Database, '数据管理'],
+    ['api', KeyRound, 'API Key'],
     ['shortcuts', Keyboard, '快捷键'],
   ];
   return (
@@ -270,6 +275,8 @@ export function Settings({ bootstrap, onClose, onChanged, onLogout, onError }) {
               onClick={() => {
                 setTab(key);
                 setNotice('');
+                setNewKey('');
+                if (key === 'api') api('/api-keys').then(setKeys).catch(onError);
               }}
             >
               <Icon size={17} />
@@ -452,6 +459,95 @@ export function Settings({ bootstrap, onClose, onChanged, onLogout, onError }) {
                 }}
               />
               <p className="muted small">大规模备份：停止服务后备份整个数据目录，详见 README。</p>
+            </>
+          )}
+          {tab === 'api' && (
+            <>
+              <h3>API Key</h3>
+              <p className="muted">密钥可通过 CLI 读取和修改当前账户的笔记，请妥善保管。</p>
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  setBusy(true);
+                  try {
+                    const result = await api('/api-keys', {
+                      method: 'POST',
+                      body: { name: keyName },
+                    });
+                    setNewKey(result.token);
+                    setKeys(await api('/api-keys'));
+                  } catch (error) {
+                    onError(error);
+                  } finally {
+                    setBusy(false);
+                  }
+                }}
+              >
+                <label className="field">
+                  密钥名称
+                  <input
+                    value={keyName}
+                    onChange={(e) => setKeyName(e.target.value)}
+                    required
+                    maxLength={100}
+                  />
+                </label>
+                <button className="primary" disabled={busy}>
+                  创建密钥
+                </button>
+              </form>
+              {newKey && (
+                <div className="field">
+                  <p>密钥仅显示一次，请立即复制保存。</p>
+                  <input
+                    aria-label="新建的 API Key"
+                    readOnly
+                    value={newKey}
+                    onFocus={(e) => e.target.select()}
+                  />
+                  <button
+                    className="secondary"
+                    onClick={async () => {
+                      try {
+                        await navigator.clipboard.writeText(newKey);
+                        setNotice('密钥已复制');
+                      } catch (error) {
+                        onError(error);
+                      }
+                    }}
+                  >
+                    复制密钥
+                  </button>
+                </div>
+              )}
+              {keys.map((key) => (
+                <div className="data-action" key={key.id}>
+                  <div>
+                    <strong>{key.name}</strong>
+                    <p>创建于 {date(key.created_at)}</p>
+                  </div>
+                  <button
+                    className="secondary danger-text"
+                    disabled={busy}
+                    onClick={async () => {
+                      if (!window.confirm(`确定撤销密钥“${key.name}”？`)) return;
+                      setBusy(true);
+                      try {
+                        await api('/api-keys/' + key.id, { method: 'DELETE' });
+                        setKeys(await api('/api-keys'));
+                        setNewKey('');
+                      } catch (error) {
+                        onError(error);
+                      } finally {
+                        setBusy(false);
+                      }
+                    }}
+                  >
+                    撤销
+                  </button>
+                </div>
+              ))}
+              {!keys.length && <p className="muted">尚未创建密钥。</p>}
             </>
           )}
           {tab === 'shortcuts' && (

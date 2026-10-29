@@ -14,7 +14,8 @@ FROM dependencies AS production-dependencies
 RUN pnpm prune --prod --ignore-scripts
 
 FROM node:24.22.1-bookworm-slim AS production
-RUN apt-get update && apt-get install -y --no-install-recommends chromium fonts-noto-cjk && rm -rf /var/lib/apt/lists/*
+RUN sed -i 's|deb.debian.org|mirrors.tuna.tsinghua.edu.cn|g' /etc/apt/sources.list.d/debian.sources \
+    && apt-get update && apt-get install -y --no-install-recommends chromium fonts-noto-cjk && rm -rf /var/lib/apt/lists/*
 ENV NODE_ENV=production PORT=3000 HOST=0.0.0.0 DATA_DIR=/data
 WORKDIR /app
 COPY --chown=node:node package.json ./

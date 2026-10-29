@@ -261,6 +261,20 @@ export function createApp({
     res.json({ ok: true, version: '0.1.0' });
   });
   app.use((req, _res, next) => {
+    const authorization = req.get('Authorization');
+    if (authorization) {
+      const match = /^Bearer (wn_[a-f0-9]{64})$/.exec(authorization);
+      const allowed =
+        (req.path === '/api/notes' && ['GET', 'POST'].includes(req.method)) ||
+        (/^\/api\/notes\/[^/]+$/.test(req.path) && ['GET', 'PATCH'].includes(req.method));
+      if (!match || !allowed) return next(error(401, 'API Key 无效或无权访问此接口'));
+      req.user = get(
+        'SELECT u.* FROM users u JOIN api_keys k ON k.user_id=u.id WHERE k.token_hash=?',
+        hashToken(match[1]),
+      );
+      if (!req.user) return next(error(401, 'API Key 无效或已撤销'));
+      return next();
+    }
     const token = (req.headers.cookie || '')
       .split(';')
       .map((s) => s.trim())
@@ -489,6 +503,35 @@ export function createApp({
       run('UPDATE users SET name=? WHERE id=?', name, user);
     });
     session(req, res, get('SELECT * FROM users WHERE id=?', user));
+  });
+  app.get('/api/api-keys', (req, res) => {
+    res.json(
+      all(
+        'SELECT id,name,created_at FROM api_keys WHERE user_id=? ORDER BY created_at DESC',
+        owner(req),
+      ),
+    );
+  });
+  app.post('/api/api-keys', (req, res) => {
+    const name = text(req.body.name || 'CLI', 100).trim();
+    if (!name) throw error(400, '密钥名称不能为空');
+    const id = uuid(),
+      token = 'wn_' + randomBytes(32).toString('hex'),
+      created_at = now();
+    run(
+      'INSERT INTO api_keys(id,user_id,token_hash,name,created_at) VALUES(?,?,?,?,?)',
+      id,
+      owner(req),
+      hashToken(token),
+      name,
+      created_at,
+    );
+    res.status(201).json({ id, name, created_at, token });
+  });
+  app.delete('/api/api-keys/:id', (req, res) => {
+    const result = run('DELETE FROM api_keys WHERE id=? AND user_id=?', req.params.id, owner(req));
+    if (!result.changes) throw error(404, '密钥不存在');
+    res.json({ ok: true });
   });
   app.put('/api/settings', (req, res) => {
     const changes = req.body;
