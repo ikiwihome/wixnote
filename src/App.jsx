@@ -328,7 +328,13 @@ function Workspace({ onLogout }) {
     [lastPanel, setLastPanel] = useState(null),
     [focus, setFocus] = useState(false),
     [mobilePane, setMobilePane] = useState('list'),
-    [navigation, setNavigation] = useState(true),
+    [navigation, setNavigation] = useState(() => {
+      try {
+        return localStorage.getItem('wixnote-navigation') !== 'hidden';
+      } catch {
+        return true;
+      }
+    }),
     [panelWidths, setPanelWidths] = useState({ left: 240, middle: 300 });
   const draftRef = useRef(null),
     draggedFolder = useRef(null),
@@ -572,6 +578,13 @@ function Workspace({ onLogout }) {
   useEffect(() => {
     editingRef.current = editing;
   }, [editing]);
+  useEffect(() => {
+    try {
+      localStorage.setItem('wixnote-navigation', navigation ? 'visible' : 'hidden');
+    } catch {
+      /* Storage may be unavailable. */
+    }
+  }, [navigation]);
   const listQuery = new URLSearchParams({ ...scope, q: search, sort, direction }).toString();
   // Pick up changes from other tabs and devices quietly: no loading state, and state only
   // changes when the server data differs, so the list doesn't flash.
