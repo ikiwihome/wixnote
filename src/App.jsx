@@ -751,7 +751,7 @@ function Workspace({ onLogout }) {
     const safeName = (row.title || '无标题笔记').replace(/[<>:"/\\|?*]/g, '_');
     if (format === 'word' || format === 'pdf') {
       try {
-        await exportDocument(row, format, safeName);
+        await exportDocument(editorRef.current, row, format, safeName);
       } catch (error) {
         onError(error);
       }

@@ -170,6 +170,15 @@ export default function NoteEditor({
         }
         return;
       }
+      if (message.action === 'exported') {
+        const item = pending.get(message.requestId);
+        if (item) {
+          clearTimeout(item.timer);
+          pending.delete(message.requestId);
+          item.resolve(message.data);
+        }
+        return;
+      }
       if (message.action === 'error') {
         const error = new Error(message.error || '编辑器加载失败');
         if (!loaded) {
@@ -221,6 +230,17 @@ export default function NoteEditor({
       }
     }
     window.addEventListener('message', receive);
+    function call(message, timeoutMessage) {
+      const requestId = ++sequence;
+      return new Promise((resolve, reject) => {
+        const timer = setTimeout(() => {
+          pending.delete(requestId);
+          reject(new Error(timeoutMessage));
+        }, 65000);
+        pending.set(requestId, { resolve, reject, timer });
+        send({ ...message, requestId });
+      });
+    }
     const controller = {
       async flush() {
         let timer;
@@ -238,15 +258,14 @@ export default function NoteEditor({
         // document and allow navigation/backup instead of trapping the workspace.
         if (loadError) return;
         if (!active) throw new Error('编辑器已切换');
-        const requestId = ++sequence;
-        await new Promise((resolve, reject) => {
-          const timer = setTimeout(() => {
-            pending.delete(requestId);
-            reject(new Error('等待编辑器保存超时'));
-          }, 65000);
-          pending.set(requestId, { resolve, reject, timer });
-          send({ action: 'capture', requestId });
-        });
+        await call({ action: 'capture' }, '等待编辑器保存超时');
+      },
+      // Renders the note with the editor's native layout: a .docx Blob or a standalone HTML page.
+      async export(format, title) {
+        await loadedPromise;
+        if (loadError) throw loadError;
+        if (!active) throw new Error('编辑器已切换');
+        return call({ action: 'export', format, title }, '导出超时，请重试');
       },
       scrollHeading(index) {
         send({ action: 'scroll-heading', index });

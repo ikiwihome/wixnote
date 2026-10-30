@@ -1,5 +1,21 @@
 import './bootstrap.js';
 import * as WizEditor from 'wiz-editor/client';
+import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate';
+import frameCss from '../../public/editor/frame.css?raw';
+
+const documentFont = 'Microsoft YaHei';
+
+// Page layout for the PDF export; everything else comes from the editor's own styles.
+const printCss = `
+  @page { size: A4; margin: 18mm 16mm; }
+  html, body { min-height: 0; background: #fff; }
+  * { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+  #editor > .editor-main { min-height: 0; --editor-width: 100%; }
+  #editor > .editor-main > .root-container-extend { max-width: none; }
+  #editor .editor-container.root-container { min-height: 0; padding: 0; }
+  #editor .editor-block { break-inside: avoid-page; }
+  .export-title { font-size: calc(var(--editor-font-size) * 1.875); font-weight: 600; line-height: 1.3; margin: 0 0 .6em; color: #1f2328; }
+`;
 
 (() => {
   'use strict';
@@ -107,6 +123,95 @@ import * as WizEditor from 'wiz-editor/client';
         image.setAttribute('src', src.replace('wix-resource:', '/files/'));
     }
     return dom.body.innerHTML;
+  }
+  const dataUrl = (blob) =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = () => reject(new Error('无法读取笔记图片'));
+      reader.readAsDataURL(blob);
+    });
+  // A standalone page with the editor's native markup and styles, so the PDF keeps
+  // the exact layout shown in the editor. Images are inlined: the renderer is offline.
+  async function exportHtml(title) {
+    const canvases = new Map();
+    for (const canvas of editor.rootContainer().querySelectorAll('canvas'))
+      canvases.set(canvas, canvas.toDataURL());
+    const dom = new DOMParser().parseFromString(editor.toHtml(), 'text/html');
+    for (const [canvas, src] of canvases) {
+      const id = canvas.getAttribute('data-canvas-temp-id');
+      const copy = id && dom.querySelector(`canvas[data-canvas-temp-id="${id}"]`);
+      if (!copy) continue;
+      const image = dom.createElement('img');
+      image.src = src;
+      image.style.cssText = `width:${canvas.clientWidth}px;height:${canvas.clientHeight}px`;
+      copy.replaceWith(image);
+    }
+    for (const image of dom.querySelectorAll('img')) {
+      const src = image.getAttribute('src') || '';
+      const blob = blobs.get(src) || blobs.get(resourceUrl(src));
+      if (blob) image.setAttribute('src', await dataUrl(blob));
+      image.removeAttribute('srcset');
+    }
+    for (const control of dom.querySelectorAll('script,.block-tools,.editor-code-config,button'))
+      control.remove();
+    const main = dom.querySelector('.editor-main');
+    if (main) {
+      const fontSize = editor.rootElement.style.getPropertyValue('--editor-font-size') || '16px';
+      main.style.setProperty('--editor-font-size', fontSize);
+      const wrapper = dom.createElement('div');
+      wrapper.id = 'editor';
+      wrapper.className = 'desktop-editor';
+      wrapper.style.setProperty('--editor-font-size', fontSize);
+      const heading = dom.createElement('h1');
+      heading.className = 'export-title';
+      heading.textContent = title;
+      main.before(wrapper);
+      wrapper.append(heading, main);
+    }
+    const styles = [...document.querySelectorAll('style')].map((style) => style.textContent);
+    for (const element of dom.head.querySelectorAll('style,link')) element.remove();
+    const style = dom.createElement('style');
+    style.textContent = [...styles, frameCss, printCss].join('\n');
+    dom.head.append(style);
+    return '<!doctype html>\n' + dom.documentElement.outerHTML;
+  }
+  async function exportDocx(title) {
+    // toDocx reads doc.data() synchronously before its first await; prepend the note
+    // title for that call only, so the Word file starts with it like the PDF does.
+    const doc = editor.doc,
+      data = doc.data,
+      own = Object.hasOwn(doc, 'data');
+    doc.data = function () {
+      const value = data.call(this);
+      const heading = {
+        id: WizEditor.genId(),
+        type: 'text',
+        heading: 1,
+        text: [{ insert: title }],
+      };
+      return { ...value, blocks: [heading, ...value.blocks] };
+    };
+    let docx;
+    try {
+      docx = editor.toDocx(undefined, false);
+    } finally {
+      if (own) doc.data = data;
+      else delete doc.data;
+    }
+    return withDocumentFont(await docx);
+  }
+  // The built-in template leaves body text on Word's theme fonts (DengXian/SimSun for CJK);
+  // use Microsoft YaHei like the editor. Code keeps Consolas for Latin text.
+  async function withDocumentFont(blob) {
+    const files = unzipSync(new Uint8Array(await blob.arrayBuffer()));
+    const fonts = `w:ascii="${documentFont}" w:eastAsia="${documentFont}" w:hAnsi="${documentFont}" w:cs="${documentFont}"`;
+    files['word/styles.xml'] = strToU8(
+      strFromU8(files['word/styles.xml'])
+        .replace(/<w:rFonts w:asciiTheme="[^"]*"[^>]*\/>/g, `<w:rFonts ${fonts}/>`)
+        .replaceAll('w:eastAsia="SimSun"', `w:eastAsia="${documentFont}"`),
+    );
+    return new Blob([zipSync(files)], { type: blob.type });
   }
   async function snapshot(requestId, attempt = 0) {
     if (!loaded || !editor) throw new Error('编辑器尚未加载');
@@ -271,6 +376,11 @@ import * as WizEditor from 'wiz-editor/client';
       else if (message.action === 'capture') {
         clearTimeout(timer);
         await snapshot(message.requestId);
+      } else if (message.action === 'export') {
+        if (!loaded || !editor) throw new Error('编辑器尚未加载');
+        const title = String(message.title || '无标题笔记');
+        const data = message.format === 'docx' ? await exportDocx(title) : await exportHtml(title);
+        send({ action: 'exported', requestId: message.requestId, data });
       } else if (message.action === 'clean' && message.revision === revision) {
         dirty = false;
         editor?.onClean();
