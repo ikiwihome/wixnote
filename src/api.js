@@ -15,9 +15,9 @@ export async function api(url, options = {}) {
     credentials: 'same-origin',
     headers: {
       'X-Wix-Request': '1',
-      ...(body instanceof FormData
+      ...(body == null || body instanceof FormData
         ? {}
-        : { 'Content-Type': json || body == null ? gzipJsonType : 'application/zip' }),
+        : { 'Content-Type': json ? gzipJsonType : 'application/zip' }),
       ...options.headers,
     },
     body: json ? await gzipJson(body) : (body ?? undefined),

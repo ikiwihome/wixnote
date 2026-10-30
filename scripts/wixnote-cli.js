@@ -33,7 +33,7 @@ try {
       headers: {
         Authorization: `Bearer ${process.env.WIXNOTE_API_KEY}`,
         'X-Wix-Request': '1',
-        'Content-Type': 'application/vnd.wix.json+gzip',
+        ...(body === undefined ? {} : { 'Content-Type': 'application/vnd.wix.json+gzip' }),
       },
       body: body === undefined ? undefined : gzipSync(JSON.stringify(body)),
       redirect: 'error',

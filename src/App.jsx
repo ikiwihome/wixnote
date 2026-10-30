@@ -1853,6 +1853,12 @@ function Workspace({ onLogout }) {
             setRefreshKey((k) => k + 1);
           }}
           onLogout={logout}
+          onDeleted={() => {
+            for (const key of Object.keys(localStorage))
+              if (key.startsWith('wixnote-draft-') || key === 'wixnote-active-draft')
+                localStorage.removeItem(key);
+            onLogout();
+          }}
           onError={onError}
         />
       )}

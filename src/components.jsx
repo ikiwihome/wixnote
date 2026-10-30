@@ -251,11 +251,12 @@ export function Dropdown({ items, position, onClose }) {
     </div>
   );
 }
-export function Settings({ bootstrap, onClose, onChanged, onLogout, onError }) {
+export function Settings({ bootstrap, onClose, onChanged, onLogout, onDeleted, onError }) {
   const [tab, setTab] = useState('account'),
     [name, setName] = useState(bootstrap.user.name),
     [password, setPassword] = useState(''),
     [current, setCurrent] = useState(''),
+    [deletePassword, setDeletePassword] = useState(''),
     [busy, setBusy] = useState(false),
     [notice, setNotice] = useState(''),
     [keys, setKeys] = useState([]),
@@ -389,6 +390,44 @@ export function Settings({ bootstrap, onClose, onChanged, onLogout, onError }) {
               <button className="secondary danger-text" onClick={onLogout}>
                 退出登录
               </button>
+              <hr />
+              <h4>删除账户</h4>
+              <p className="muted">
+                将永久删除此账户及其全部笔记、文件夹、标签、附件和 API
+                Key，且无法恢复。建议先在「数据管理」中导出完整备份。
+              </p>
+              <form
+                onSubmit={async (e) => {
+                  e.preventDefault();
+                  if (!window.confirm(`确定永久删除账户“${bootstrap.user.email}”及其全部数据？`))
+                    return;
+                  setBusy(true);
+                  try {
+                    await api('/account', {
+                      method: 'DELETE',
+                      body: { password: deletePassword },
+                    });
+                    onDeleted();
+                  } catch (e) {
+                    onError(e);
+                    setBusy(false);
+                  }
+                }}
+              >
+                <label className="field">
+                  当前密码
+                  <input
+                    type="password"
+                    autoComplete="current-password"
+                    value={deletePassword}
+                    onChange={(e) => setDeletePassword(e.target.value)}
+                    required
+                  />
+                </label>
+                <button className="danger primary" disabled={busy || !deletePassword}>
+                  永久删除账户
+                </button>
+              </form>
             </>
           )}
           {tab === 'appearance' && (

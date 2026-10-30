@@ -328,10 +328,19 @@ export function createApp({
   const jsonParser = (limit) => {
     const json = express.json({ limit }),
       raw = express.raw({ type: 'application/vnd.wix.json+gzip', limit });
+    // Bodyless requests (logout, DELETE, ...) still get `{}` so routes can read req.body safely.
+    const done = (req, next) => (err) => {
+      req.body ??= {};
+      next(err);
+    };
     return (req, res, next) => {
-      if (!req.is('application/vnd.wix.json+gzip')) return json(req, res, next);
+      if (!req.is('application/vnd.wix.json+gzip')) return json(req, res, done(req, next));
       raw(req, res, (err) => {
-        if (err || !Buffer.isBuffer(req.body)) return next(err);
+        if (err || !Buffer.isBuffer(req.body)) return done(req, next)(err);
+        if (!req.body.length) {
+          req.body = {};
+          return next();
+        }
         try {
           const text = gunzipSync(req.body, { maxOutputLength: limit }).toString('utf8');
           req.body = JSON.parse(text);
@@ -585,6 +594,36 @@ export function createApp({
     if (!key) throw error(404, '密钥不存在');
     save(() => {
       db().apiKeys = db().apiKeys.filter((k) => k.id !== key.id);
+    });
+    res.json({ ok: true });
+  });
+  // Deletes the signed-in account with all of its notes, attachments, keys and sessions.
+  app.delete('/api/account', async (req, res) => {
+    const user = owner(req);
+    authAttempt(req, 'password');
+    if (!(await passwordMatches(text(req.body.password, 200), req.user.password)))
+      throw error(403, '密码错误');
+    if (user === adminId() && db().users.length > 1)
+      throw error(400, '管理员账户需在其他用户全部删除后才能删除');
+    removeNotes(
+      new Set(
+        db()
+          .notes.filter((n) => n.user_id === user)
+          .map((n) => n.id),
+      ),
+    );
+    save(() => {
+      const data = db();
+      for (const key of ['folders', 'tags', 'apiKeys', 'sessions'])
+        data[key] = data[key].filter((row) => row.user_id !== user);
+      delete data.settings[user];
+      data.users = data.users.filter((u) => u.id !== user);
+    });
+    res.clearCookie('wix_session', {
+      path: '/',
+      httpOnly: true,
+      sameSite: 'strict',
+      secure: secureCookie,
     });
     res.json({ ok: true });
   });
