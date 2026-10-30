@@ -14,13 +14,11 @@ import {
   MoreHorizontal,
   PanelLeft,
   PanelLeftClose,
-  Hash,
   Pin,
   Paperclip,
   Share2,
   History as HistoryIcon,
   Info,
-  MessageSquare,
   ListTree,
   Check,
   Loader2,
@@ -60,7 +58,6 @@ import {
   Settings,
   History,
   ShareDialog,
-  Comments,
   templates,
   outlineTemplate,
 } from './components.jsx';
@@ -313,7 +310,6 @@ function Workspace({ onLogout }) {
     [sort, setSort] = useState('updated'),
     [direction, setDirection] = useState('desc'),
     [expanded, setExpanded] = useState({}),
-    [tagsOpen, setTagsOpen] = useState(true),
     [foldersOpen, setFoldersOpen] = useState(true),
     [folderDrop, setFolderDrop] = useState(null),
     [menu, setMenu] = useState(null),
@@ -442,7 +438,6 @@ function Workspace({ onLogout }) {
             editor_data: snapshot.editor_data ?? null,
             type: snapshot.type,
             folder_id: snapshot.folder_id,
-            tags: snapshot.tags.map((t) => t.id),
             pinned: snapshot.pinned,
             version,
           },
@@ -473,18 +468,7 @@ function Workspace({ onLogout }) {
         }
         setNotes((rows) => rows.map((n) => (n.id === saved.id ? summary(saved) : n)));
         refresh();
-        if (
-          saved.folder_id !== previous.folder_id ||
-          saved.tags
-            .map((t) => t.id)
-            .sort()
-            .join() !==
-            previous.tags
-              .map((t) => t.id)
-              .sort()
-              .join()
-        )
-          setRefreshKey((k) => k + 1);
+        if (saved.folder_id !== previous.folder_id) setRefreshKey((k) => k + 1);
         return true;
       } catch (e) {
         setSaveStatus(e.status === 409 ? 'conflict' : 'error');
@@ -662,7 +646,6 @@ function Workspace({ onLogout }) {
           content: template.content,
           type: template.type,
           folder_id: scope.folder || boot.folders[0]?.id || null,
-          tags: scope.tag ? [scope.tag] : [],
         },
       });
       listSequence.current++;
@@ -952,43 +935,6 @@ function Workspace({ onLogout }) {
       },
     });
   }
-  function tagMenu(tag) {
-    return [
-      {
-        label: '重命名标签',
-        action: () =>
-          setDialog({
-            type: 'prompt',
-            title: '重命名标签',
-            label: '标签名称',
-            initial: tag.name,
-            action: async (name) => {
-              await api('/tags/' + tag.id, { method: 'PATCH', body: { name } });
-              await refresh();
-              setRefreshKey((k) => k + 1);
-            },
-          }),
-      },
-      {
-        label: '删除标签',
-        danger: true,
-        action: () =>
-          setDialog({
-            type: 'confirm',
-            title: '删除标签',
-            description: '笔记内容会保留，标签关联将被移除。',
-            action: async () => {
-              if (!(await ensureSaved())) throw new Error('请先保存当前笔记');
-              await api('/tags/' + tag.id, { method: 'DELETE' });
-              await refresh();
-              if (draftRef.current) assign(await api('/notes/' + draftRef.current.id));
-              setScope({ view: 'all' });
-              setRefreshKey((k) => k + 1);
-            },
-          }),
-      },
-    ];
-  }
   const renderFolders = (parent = null, depth = 0) =>
     boot.folders
       .filter((f) => f.parent_id === parent)
@@ -1123,12 +1069,10 @@ function Workspace({ onLogout }) {
         {toast && <p className="error-text">{toast.message}</p>}
       </div>
     );
-  const currentFolder = boot.folders.find((f) => f.id === scope.folder),
-    currentTag = boot.tags.find((t) => t.id === scope.tag);
+  const currentFolder = boot.folders.find((f) => f.id === scope.folder);
   const title = search
     ? '搜索结果'
     : currentFolder?.name ||
-      currentTag?.name ||
       { all: '个人笔记', favorites: '我的收藏', trash: '回收站' }[scope.view];
   const breadcrumbs = [];
   let f = boot.folders.find((f) => f.id === draft?.folder_id);
@@ -1172,7 +1116,7 @@ function Workspace({ onLogout }) {
             <div
               className={
                 'nav-row all-notes ' +
-                (scope.view === 'all' && !scope.folder && !scope.tag ? 'selected' : '')
+                (scope.view === 'all' && !scope.folder ? 'selected' : '')
               }
             >
               <button
@@ -1211,56 +1155,6 @@ function Workspace({ onLogout }) {
                 renderFolders()
               ) : (
                 <span className="nav-empty">新建文件夹来整理笔记</span>
-              )}
-            </nav>
-          </Collapse>
-          <div className="nav-section tag-section">
-            <button aria-label="折叠或展开标签" onClick={() => setTagsOpen(!tagsOpen)}>
-              <span>标签</span>
-              <ChevronRight size={12} className={'chevron' + (tagsOpen ? ' open' : '')} />
-            </button>
-            <button
-              aria-label="新建标签"
-              title="新建标签"
-              onClick={() =>
-                setDialog({
-                  type: 'prompt',
-                  title: '新建标签',
-                  label: '标签名称',
-                  action: async (name) => {
-                    await api('/tags', { method: 'POST', body: { name } });
-                    await refresh();
-                  },
-                })
-              }
-            >
-              <Plus size={14} />
-            </button>
-          </div>
-          <Collapse open={tagsOpen}>
-            <nav className="tags-nav">
-              {boot.tags.length ? (
-                boot.tags.map((t) => (
-                  <div
-                    key={t.id}
-                    className={'nav-row ' + (scope.tag === t.id ? 'selected' : '')}
-                    onContextMenu={(e) => showMenu(e, tagMenu(t))}
-                  >
-                    <button onClick={() => changeScope({ view: 'all', tag: t.id })}>
-                      <Hash size={14} />
-                      <span>{t.name}</span>
-                    </button>
-                    <button
-                      className="nav-more"
-                      aria-label={t.name + '标签菜单'}
-                      onClick={(e) => showMenu(e, tagMenu(t))}
-                    >
-                      <MoreHorizontal size={15} />
-                    </button>
-                  </div>
-                ))
-              ) : (
-                <span className="nav-empty">用标签连接你的想法</span>
               )}
             </nav>
           </Collapse>
@@ -1461,13 +1355,6 @@ function Workspace({ onLogout }) {
                     {n.attachment_count > 0 && <Paperclip size={12} />}
                   </span>
                 </div>
-                {n.tags.length > 0 && (
-                  <div className="card-tags">
-                    {n.tags.slice(0, 3).map((t) => (
-                      <span key={t.id}>{t.name}</span>
-                    ))}
-                  </div>
-                )}
               </div>
             ))
           ) : (
@@ -1592,12 +1479,6 @@ function Workspace({ onLogout }) {
                   showMenu(e, [
                     ...noteMenu(draft),
                     { separator: true },
-                    {
-                      icon: MessageSquare,
-                      label: '评论',
-                      disabled: deleted,
-                      action: () => savedDialog('comments'),
-                    },
                     { icon: Download, label: '导出为 Word', action: () => exportNote('word') },
                     { icon: Download, label: '导出为 PDF', action: () => exportNote('pdf') },
                     {
@@ -1821,7 +1702,6 @@ function Workspace({ onLogout }) {
                   content: await file.text(),
                   type: 'markdown',
                   folder_id: scope.folder || boot.folders[0]?.id || null,
-                  tags: scope.tag ? [scope.tag] : [],
                 },
               });
             }
@@ -1887,9 +1767,6 @@ function Workspace({ onLogout }) {
           }}
           onError={onError}
         />
-      )}
-      {dialog?.type === 'comments' && draft && (
-        <Comments note={draft} onClose={() => setDialog(null)} onError={onError} />
       )}
       {(dialog?.type === 'prompt' || dialog?.type === 'confirm') && (
         <PromptDialog

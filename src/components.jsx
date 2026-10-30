@@ -8,8 +8,6 @@ import {
   Palette,
   Keyboard,
   Database,
-  Trash2,
-  MessageSquare,
   History as HistoryIcon,
   Link2,
   Copy,
@@ -851,82 +849,6 @@ export function ShareDialog({ note, onClose, onUpdated, onError }) {
             创建分享链接
           </button>
         )}
-      </div>
-    </Modal>
-  );
-}
-export function Comments({ note, onClose, onError }) {
-  const [items, setItems] = useState([]),
-    [body, setBody] = useState(''),
-    [busy, setBusy] = useState(false);
-  const load = useCallback(
-    () => api(`/notes/${note.id}/comments`).then(setItems).catch(onError),
-    [note.id, onError],
-  );
-  useEffect(() => {
-    load();
-  }, [load]);
-  return (
-    <Modal title="笔记评论" onClose={onClose}>
-      <div className="dialog-body">
-        <div className="comments-list">
-          {items.length ? (
-            items.map((c) => (
-              <div className="comment" key={c.id}>
-                <div>
-                  <span className="muted small">{date(c.created_at)}</span>
-                  <IconButton
-                    icon={Trash2}
-                    label="删除评论"
-                    onClick={async () => {
-                      try {
-                        await api('/comments/' + c.id, { method: 'DELETE' });
-                        load();
-                      } catch (e) {
-                        onError(e);
-                      }
-                    }}
-                  />
-                </div>
-                <p>{c.body}</p>
-              </div>
-            ))
-          ) : (
-            <div className="empty-state">
-              <MessageSquare size={30} />
-              <p>记录这篇笔记的补充想法</p>
-            </div>
-          )}
-        </div>
-        <form
-          onSubmit={async (e) => {
-            e.preventDefault();
-            setBusy(true);
-            try {
-              await api(`/notes/${note.id}/comments`, { method: 'POST', body: { body } });
-              setBody('');
-              await load();
-            } catch (e) {
-              onError(e);
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          <textarea
-            aria-label="评论内容"
-            rows={3}
-            value={body}
-            onChange={(e) => setBody(e.target.value)}
-            placeholder="添加评论…"
-            maxLength={10000}
-          />
-          <footer>
-            <button className="primary" disabled={busy || !body.trim()}>
-              发表评论
-            </button>
-          </footer>
-        </form>
       </div>
     </Modal>
   );

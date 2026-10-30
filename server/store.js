@@ -15,11 +15,9 @@ const collections = [
   'sessions',
   'apiKeys',
   'folders',
-  'tags',
   'notes',
   'revisions',
   'attachments',
-  'comments',
 ];
 const empty = () => ({
   format: 'wixnote-index',
@@ -92,6 +90,10 @@ export function openStore(directory) {
     if (parsed?.format !== 'wixnote-index') throw new Error(`${indexFile} 不是 WixNote 索引文件`);
     if (parsed.version > 1) throw new Error('索引文件版本高于当前应用');
     state = { ...empty(), ...parsed };
+    // Tags and comments were removed; drop them from older indexes on the next write.
+    delete state.tags;
+    delete state.comments;
+    for (const note of state.notes) delete note.tags;
   }
   function sync() {
     if (!pending && mtime(indexFile) !== stamp) load();

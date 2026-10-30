@@ -456,8 +456,7 @@ kbd {
   color: var(--primary);
 }
 .all-notes-select,
-.folder-select,
-.tags-nav > .nav-row > button:first-child {
+.folder-select {
   flex: 1;
   min-width: 0;
   height: 100%;
@@ -470,8 +469,7 @@ kbd {
   color: inherit;
 }
 .all-notes-select > span,
-.folder-select > span,
-.tags-nav > .nav-row > button:first-child span {
+.folder-select > span {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -518,11 +516,7 @@ kbd {
   background: var(--hover);
   color: var(--text);
 }
-.tag-section {
-  margin-top: 16px;
-}
-.folder-tree .nav-row,
-.tags-nav .nav-row {
+.folder-tree .nav-row {
   margin-bottom: 1px;
 }
 .folder-row.drop-before {
@@ -606,12 +600,6 @@ kbd {
 .nav-row:hover .nav-more,
 .nav-more:focus-visible {
   opacity: 1;
-}
-.tags-nav > .nav-row {
-  padding-right: 4px;
-}
-.tags-nav > .nav-row > button:first-child {
-  gap: 8px;
 }
 .nav-empty {
   display: block;
@@ -904,25 +892,6 @@ kbd {
   gap: 6px;
   align-items: center;
 }
-.card-tags {
-  display: flex;
-  gap: 4px;
-  flex-wrap: wrap;
-  margin-top: 8px;
-}
-.card-tags > span {
-  font-size: 11px;
-  line-height: 18px;
-  padding: 0 7px;
-  border-radius: 999px;
-  color: var(--muted);
-  background: var(--selected);
-}
-.card-tags > span:before {
-  content: '#';
-  margin-right: 1px;
-  opacity: 0.6;
-}
 .compact .note-card {
   padding-top: 10px;
   padding-bottom: 10px;
@@ -930,8 +899,7 @@ kbd {
 .compact .note-card-title {
   margin-bottom: 2px;
 }
-.compact .note-excerpt,
-.compact .card-tags {
+.compact .note-excerpt {
   display: none;
 }
 .list-empty {
@@ -1824,31 +1792,6 @@ kbd {
 .dialog-body > .primary {
   width: 100%;
   height: 38px;
-}
-.comments-list {
-  max-height: 320px;
-  overflow: auto;
-  margin-bottom: 16px;
-}
-.comment {
-  padding: 10px 0 12px;
-  border-bottom: 1px solid var(--line);
-}
-.comment > div {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-}
-.comment > div .icon-button {
-  height: 26px;
-  min-width: 26px;
-  padding: 5px;
-}
-.comment p {
-  margin: 4px 0 0;
-  white-space: pre-wrap;
-  font-size: 13.5px;
-  line-height: 1.7;
 }
 
 /* Templates */

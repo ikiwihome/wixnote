@@ -107,7 +107,6 @@ const inlineImage = (buffer) => {
 const compare = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
 const byName = (a, b) => compare(a.name, b.name);
 const byCreated = (a, b) => compare(a.created_at, b.created_at);
-const validColor = (value) => typeof value === 'string' && /^#[0-9a-f]{6}$/i.test(value);
 
 function validateFolderTree(rows) {
   const records = new Map(rows.map((row) => [row.id, row])),
@@ -176,10 +175,6 @@ export function createApp({
       texts.set(body, row.type === 'markdown' ? body.content : extractText(body.content));
     return texts.get(body);
   };
-  const noteTags = (row) =>
-    db()
-      .tags.filter((t) => row.tags.includes(t.id))
-      .sort(byName);
   const noteDetail = (row) => {
     const body = store.body('notes', row.id);
     return {
@@ -187,19 +182,11 @@ export function createApp({
       content: body.content,
       text: plainText(row),
       editor_data: editorData(body.editor_data),
-      tags: noteTags(row),
       attachments: db()
         .attachments.filter((a) => a.note_id === row.id)
         .sort(byCreated),
     };
   };
-  function setTags(row, tags, user) {
-    if (!Array.isArray(tags) || tags.length > 200) throw error(400, '标签格式不正确');
-    for (const id of tags)
-      if (typeof id !== 'string' || !db().tags.some((t) => t.id === id && t.user_id === user))
-        throw error(400, '标签不存在');
-    row.tags = [...new Set(tags)];
-  }
   // Must run before the note's body is replaced, so it captures the previous content.
   function revision(row) {
     const id = uuid(),
@@ -234,7 +221,6 @@ export function createApp({
       updated_at: date,
       version: 1,
       share_token: null,
-      tags: [],
     };
     db().notes.push(row);
     store.setBody(
@@ -243,7 +229,6 @@ export function createApp({
       content,
       data.editor_data != null ? storedEditorData(data.editor_data) : null,
     );
-    if (data.tags) setTags(row, data.tags, user);
     return row;
   }
   function session(req, res, user) {
@@ -530,9 +515,6 @@ export function createApp({
       folders: db()
         .folders.filter((f) => f.user_id === user)
         .sort((a, b) => a.position - b.position || byName(a, b)),
-      tags: db()
-        .tags.filter((t) => t.user_id === user)
-        .sort(byName),
       settings: db().settings[user] || {},
       counts: { total: live.length, favorites: live.filter((n) => n.favorite).length },
       trash: notes.length - live.length,
@@ -614,7 +596,7 @@ export function createApp({
     );
     save(() => {
       const data = db();
-      for (const key of ['folders', 'tags', 'apiKeys', 'sessions'])
+      for (const key of ['folders', 'apiKeys', 'sessions'])
         data[key] = data[key].filter((row) => row.user_id !== user);
       delete data.settings[user];
       data.users = data.users.filter((u) => u.id !== user);
@@ -727,47 +709,6 @@ export function createApp({
     });
     res.json({ ok: true });
   });
-  app.post('/api/tags', (req, res) => {
-    const name = text(req.body.name, 100).trim();
-    if (!name) throw error(400, '标签不能为空');
-    let tag = db().tags.find((t) => t.user_id === owner(req) && t.name === name);
-    if (!tag) {
-      tag = { id: uuid(), user_id: owner(req), name, color: '#7084a4' };
-      save(() => db().tags.push(tag));
-    }
-    res.status(201).json(tag);
-  });
-  app.patch('/api/tags/:id', (req, res) => {
-    const row = db().tags.find((t) => t.id === req.params.id && t.user_id === owner(req));
-    if (!row) throw error(404, '标签不存在');
-    const name = text(req.body.name ?? row.name, 100).trim();
-    if (!name) throw error(400, '标签不能为空');
-    const color = text(req.body.color ?? row.color, 10);
-    if (!validColor(color)) throw error(400, '颜色无效');
-    if (db().tags.some((t) => t.user_id === owner(req) && t.name === name && t.id !== row.id))
-      throw error(409, '名称或标识已存在');
-    const updated = save(() => {
-      const tag = db().tags.find((t) => t.id === row.id);
-      return Object.assign(tag, { name, color });
-    });
-    res.json(updated);
-  });
-  app.delete('/api/tags/:id', (req, res) => {
-    save(() => {
-      const data = db(),
-        date = now();
-      if (!data.tags.some((t) => t.id === req.params.id && t.user_id === owner(req))) return;
-      for (const n of data.notes)
-        if (n.user_id === owner(req) && n.tags.includes(req.params.id))
-          Object.assign(n, {
-            tags: n.tags.filter((id) => id !== req.params.id),
-            version: n.version + 1,
-            updated_at: date,
-          });
-      data.tags = data.tags.filter((t) => t.id !== req.params.id);
-    });
-    res.json({ ok: true });
-  });
   app.get('/api/notes', (req, res) => {
     const user = owner(req),
       trash = req.query.view === 'trash';
@@ -783,7 +724,6 @@ export function createApp({
       }
       rows = rows.filter((n) => tree.has(n.folder_id));
     }
-    if (req.query.tag) rows = rows.filter((n) => n.tags.includes(req.query.tag));
     if (req.query.q) {
       const q = text(req.query.q, 500).toLowerCase();
       rows = rows.filter(
@@ -815,7 +755,6 @@ export function createApp({
         version: n.version,
         excerpt: plainText(n).slice(0, 240),
         attachment_count: attachments.get(n.id) || 0,
-        tags: noteTags(n),
       })),
     );
   });
@@ -861,7 +800,6 @@ export function createApp({
         version: target.version + 1,
       });
       if (bodyChanged) store.setBody('notes', target.id, content, native);
-      if (body.tags) setTags(target, body.tags, owner(req));
     });
     res.json(noteDetail(note(row.id, owner(req))));
   });
@@ -873,7 +811,6 @@ export function createApp({
       for (const id of ids) store.removeBody('notes', id);
       data.revisions = data.revisions.filter((r) => !ids.has(r.note_id));
       data.attachments = data.attachments.filter((a) => !ids.has(a.note_id));
-      data.comments = data.comments.filter((c) => !ids.has(c.note_id));
       data.notes = data.notes.filter((n) => !ids.has(n.id));
     });
     for (const file of files)
@@ -912,7 +849,6 @@ export function createApp({
             title: row.title + ' - 副本',
             content: source.content,
             editor_data: source.editor_data,
-            tags: row.tags,
           }),
           mapping = new Map();
         for (const item of db().attachments.filter((a) => a.note_id === row.id)) {
@@ -1183,34 +1119,6 @@ export function createApp({
     }
     res.json({ ok: true });
   });
-  app.get('/api/notes/:id/comments', (req, res) => {
-    note(req.params.id, owner(req));
-    res.json(
-      db()
-        .comments.filter((c) => c.note_id === req.params.id)
-        .sort(byCreated),
-    );
-  });
-  app.post('/api/notes/:id/comments', (req, res) => {
-    const row = note(req.params.id, owner(req));
-    if (row.deleted_at) throw error(400, '请先恢复此笔记');
-    const body = text(req.body.body, 10000).trim();
-    if (!body) throw error(400, '评论不能为空');
-    const comment = { id: uuid(), note_id: row.id, body, created_at: now() };
-    save(() => db().comments.push(comment));
-    res.status(201).json(comment);
-  });
-  app.delete('/api/comments/:id', (req, res) => {
-    save(() => {
-      const data = db();
-      data.comments = data.comments.filter(
-        (c) =>
-          c.id !== req.params.id ||
-          !data.notes.some((n) => n.id === c.note_id && n.user_id === owner(req)),
-      );
-    });
-    res.json({ ok: true });
-  });
   // Backup ZIP: backup.json indexes everything; note and revision bodies are HTML files.
   app.get('/api/backup', (req, res) => {
     const user = owner(req),
@@ -1236,11 +1144,9 @@ export function createApp({
       version: 2,
       exportedAt: now(),
       folders: db().folders.filter((f) => f.user_id === user),
-      tags: db().tags.filter((t) => t.user_id === user),
       notes,
       attachments: files,
       revisions,
-      comments: db().comments.filter((c) => ids.has(c.note_id)),
     };
     res.set(
       'Content-Disposition',
@@ -1259,11 +1165,11 @@ export function createApp({
       data.format !== 'wixnote' ||
       data.version !== 2 ||
       !Array.isArray(data.notes) ||
-      !Array.isArray(data.folders) ||
-      !Array.isArray(data.tags)
+      !Array.isArray(data.folders)
     )
       throw error(400, '请使用本站导出的 ZIP 备份');
-    const collections = ['folders', 'tags', 'notes', 'attachments', 'revisions', 'comments'];
+    // Tags and comments in older backups are ignored.
+    const collections = ['folders', 'notes', 'attachments', 'revisions'];
     for (const key of collections)
       if (data[key] !== undefined && (!Array.isArray(data[key]) || data[key].length > 50000))
         throw error(400, '备份数据格式或数量不正确');
@@ -1305,18 +1211,6 @@ export function createApp({
         validateFolderTree(data.folders);
         data.folders.forEach((f, i) => (folders[i].parent_id = mapped('folders', f.parent_id)));
         index.folders.push(...folders);
-        for (const t of data.tags) {
-          const name = text(t.name, 100),
-            existing = index.tags.find((tag) => tag.user_id === user && tag.name === name);
-          if (existing) maps.tags.set(t.id, existing.id);
-          else
-            index.tags.push({
-              id: mapped('tags', t.id),
-              user_id: user,
-              name,
-              color: validColor(t.color) ? t.color : '#7084a4',
-            });
-        }
         for (const n of data.notes) {
           const [content, native] = bodyOf('notes', n),
             row = {
@@ -1332,15 +1226,9 @@ export function createApp({
               updated_at: validDate(n.updated_at),
               version: validVersion(n.version),
               share_token: null,
-              tags: [],
             };
           index.notes.push(row);
           store.setBody('notes', row.id, content, native);
-          setTags(
-            row,
-            (Array.isArray(n.tags) ? n.tags : []).map((id) => mapped('tags', id)),
-            user,
-          );
         }
         let total = 0;
         for (const f of data.attachments || []) {
@@ -1373,13 +1261,6 @@ export function createApp({
           });
           store.setBody('revisions', id, content, native);
         }
-        for (const c of data.comments || [])
-          index.comments.push({
-            id: mapped('comments', c.id),
-            note_id: mapped('notes', c.note_id),
-            body: text(c.body, 10000),
-            created_at: validDate(c.created_at),
-          });
       });
     } catch (e) {
       for (const id of written)

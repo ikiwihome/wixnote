@@ -53,7 +53,7 @@ It is built with React + Express. Notes are stored as HTML files indexed by a si
 
 - Rich-text and outline notes: headings, lists, to-do checklists, tables, code blocks, images and attachments, plus flowchart / UML diagrams.
 - 5 built-in templates: blank, meeting minutes, daily journal, reading notes and project plan. Markdown files can be imported as new notes.
-- Nested folders, tags and favorites; sort by modified time, created time or title; detailed or compact list view.
+- Nested folders and favorites; sort by modified time, created time or title; detailed or compact list view.
 
 **Finding and going back**
 
@@ -63,7 +63,7 @@ It is built with React + Express. Notes are stored as HTML files indexed by a si
 
 **Sharing and exporting**
 
-- Read-only share links that can be revoked, and private comments on notes.
+- Read-only share links that can be revoked.
 - Export to Word, PDF, HTML, Markdown and plain text.
 - Full ZIP backup with append-only restore.
 
@@ -92,7 +92,7 @@ docker compose ps
 docker compose logs -f --tail=100
 ```
 
-Notes, history, comments and attachments live in the named volume `wixnote-data`, so rebuilding the container does not lose data. The Compose file runs as a non-root user with a read-only root filesystem, `cap_drop: ALL`, a health check and the `unless-stopped` restart policy.
+Notes, history and attachments live in the named volume `wixnote-data`, so rebuilding the container does not lose data. The Compose file runs as a non-root user with a read-only root filesystem, `cap_drop: ALL`, a health check and the `unless-stopped` restart policy.
 
 Stop the service with `docker compose down`; `docker compose down -v` also deletes the data volume.
 
@@ -110,7 +110,7 @@ Inside the container the service always listens on `3000`, and the data director
 
 1. Open the home page and register the first account with an email, a display name and a password of at least 10 characters.
 2. The first account is the administrator. Registration is disabled by default and can be enabled under Settings → Account.
-3. Folders, tags, notes and attachments are isolated between accounts.
+3. Folders, notes and attachments are isolated between accounts.
 
 ## Configuration
 
@@ -172,7 +172,7 @@ curl http://localhost:3000/api/health  # Returns {"ok":true,...}
 
 ```text
 data/
-├── index.json            # Index: accounts, sessions, folders, tags, note metadata, history, comments, attachment metadata, registration switch
+├── index.json            # Index: accounts, sessions, folders, note metadata, history, attachment metadata, registration switch
 ├── notes/                # Note bodies as <note ID>.html; native editor blocks in <note ID>.editor.json
 ├── revisions/            # History bodies, same layout as notes/
 ├── attachments/          # Attachment binaries, named by attachment ID
@@ -185,7 +185,7 @@ On first start the app creates `index.json` and the folders it needs. When upgra
 
 ### In-app ZIP backup
 
-Export ZIP from "设置 → 数据管理" (Settings → Data). Inside, `backup.json` is the index (folders, tags, note metadata, comments, history, attachment info), `notes/` and `revisions/` hold HTML bodies, and `attachments/` holds the files. Import only accepts ZIP backups exported by WixNote. Import works in **append** mode: IDs are remapped and inserted without overwriting existing content.
+Export ZIP from "设置 → 数据管理" (Settings → Data). Inside, `backup.json` is the index (folders, note metadata, history, attachment info), `notes/` and `revisions/` hold HTML bodies, and `attachments/` holds the files. Import only accepts ZIP backups exported by WixNote. Import works in **append** mode: IDs are remapped and inserted without overwriting existing content.
 
 Limits: attachments in one backup may total at most 100 MB, and the uploaded ZIP at most 160 MB. Beyond that, back up the data directory instead.
 

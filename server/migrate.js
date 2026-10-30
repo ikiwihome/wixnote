@@ -13,18 +13,13 @@ export function migrateSqlite(directory, store) {
     const all = (sql) => db.prepare(sql).all();
     const has = (table) =>
       !!db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(table);
-    const tagsByNote = new Map();
-    for (const row of all('SELECT * FROM note_tags'))
-      tagsByNote.set(row.note_id, [...(tagsByNote.get(row.note_id) || []), row.tag_id]);
     store.transaction(() => {
       const data = store.data;
       data.users = all('SELECT * FROM users ORDER BY rowid');
       data.sessions = all('SELECT * FROM sessions');
       data.apiKeys = has('api_keys') ? all('SELECT * FROM api_keys') : [];
       data.folders = all('SELECT * FROM folders');
-      data.tags = all('SELECT * FROM tags');
       data.attachments = all('SELECT * FROM attachments');
-      data.comments = all('SELECT * FROM comments');
       for (const row of all('SELECT * FROM settings'))
         try {
           data.settings[row.user_id] = JSON.parse(row.value);
@@ -37,7 +32,6 @@ export function migrateSqlite(directory, store) {
           ...row,
           favorite: !!row.favorite,
           pinned: !!row.pinned,
-          tags: tagsByNote.get(row.id) || [],
         });
         store.setBody('notes', row.id, content, editor_data ?? null);
       }
