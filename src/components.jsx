@@ -16,7 +16,7 @@ import {
   KeyRound,
 } from 'lucide-react';
 import { api, download, date, timeAgo } from './api.js';
-import { SafeContent } from './Editor.jsx';
+import NoteEditor from './Editor.jsx';
 
 export function SavedTime({ value }) {
   const [now, setNow] = useState(Date.now);
@@ -682,10 +682,11 @@ export function Settings({ bootstrap, onClose, onChanged, onLogout, onDeleted, o
     </Modal>
   );
 }
-export function History({ note, onClose, onRestored, onError }) {
+export function History({ note, theme, fontSize, onClose, onRestored, onError }) {
   const [rows, setRows] = useState(null),
     [selected, setSelected] = useState(null),
-    [busy, setBusy] = useState(false);
+    [busy, setBusy] = useState(false),
+    editorRef = useRef(null);
   useEffect(() => {
     api(`/notes/${note.id}/history`)
       .then((data) => {
@@ -745,7 +746,21 @@ export function History({ note, onClose, onRestored, onError }) {
                   恢复此版本
                 </button>
               </header>
-              <SafeContent content={selected.content} type={selected.type} />
+              <NoteEditor
+                key={selected.id}
+                note={{
+                  ...note,
+                  type: selected.type || note.type,
+                  content: selected.content,
+                  editor_data: selected.editor_data,
+                }}
+                onChange={() => {}}
+                readOnly
+                editorRef={editorRef}
+                theme={theme}
+                fontSize={fontSize}
+                onError={onError}
+              />
             </>
           ) : (
             <div className="empty-state">

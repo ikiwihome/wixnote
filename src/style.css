@@ -1327,7 +1327,7 @@ kbd {
   font-size: 13px;
 }
 
-/* ---------- Rendered content (history, share, public) ---------- */
+/* ---------- Rendered content (share, public) ---------- */
 .rendered-content {
   line-height: 1.8;
   color: var(--text-soft);
@@ -1761,11 +1761,11 @@ kbd {
 .history-preview {
   flex: 1;
   min-width: 0;
-  overflow: auto;
+  display: flex;
+  flex-direction: column;
 }
 .history-preview > header {
-  position: sticky;
-  top: 0;
+  flex: none;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1784,10 +1784,6 @@ kbd {
 }
 .history-preview > header button {
   flex: none;
-}
-.history-preview > .rendered-content {
-  padding: 24px 26px;
-  font-size: 14px;
 }
 
 /* Misc dialogs */
@@ -2435,10 +2431,6 @@ kbd {
   }
   .history-preview > header strong {
     width: 100%;
-  }
-  .history-preview > .rendered-content {
-    padding: 16px;
-    font-size: 13px;
   }
   .template-grid {
     grid-template-columns: repeat(2, 1fr);

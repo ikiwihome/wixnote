@@ -1865,6 +1865,8 @@ function Workspace({ onLogout }) {
       {dialog?.type === 'history' && draft && (
         <History
           note={draft}
+          theme={boot.settings.theme || 'light'}
+          fontSize={boot.settings.fontSize || 16}
           onClose={() => setDialog(null)}
           onRestored={(row) => {
             assign(row);
